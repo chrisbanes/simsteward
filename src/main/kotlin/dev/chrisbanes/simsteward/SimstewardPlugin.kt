@@ -26,6 +26,9 @@ abstract class SimstewardPlugin @Inject constructor(
       val deviceType = providers.gradleProperty("simsteward.ios.deviceType")
       val runtime = providers.gradleProperty("simsteward.ios.runtime")
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
+      val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
+      val slim = providers.gradleProperty("simsteward.ios.slim").map { it.toBoolean() }.orElse(true)
+      val profile = providers.gradleProperty("simsteward.ios.slimProfile")
 
       val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets
       tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
@@ -36,7 +39,7 @@ abstract class SimstewardPlugin @Inject constructor(
         task.standalone.set(false)
         task.device.set(name)
         task.usesService(leases)
-        task.doFirst(LeaseAction(leases, name, deviceType, runtime, xcrun))
+        task.doFirst(LeaseAction(leases, name, deviceType, runtime, xcrun, simslim, slim, profile))
       }
     }
   }
@@ -49,12 +52,18 @@ private class LeaseAction(
   private val deviceType: Provider<String>,
   private val runtime: Provider<String>,
   private val xcrun: Provider<String>,
+  private val simslim: Provider<String>,
+  private val slim: Provider<Boolean>,
+  private val profile: Provider<String>,
 ) : Action<Task> {
   override fun execute(task: Task) {
     val spec = SimulatorSpec(
       deviceType = deviceType.orNull ?: throw missingProperty("simsteward.ios.deviceType", "device type"),
       runtime = runtime.orNull ?: throw missingProperty("simsteward.ios.runtime", "runtime"),
       xcrun = xcrun.get(),
+      slim = slim.get(),
+      simslim = simslim.get(),
+      profile = profile.orNull,
     )
     leases.get().lease(task.path, name, spec)
   }

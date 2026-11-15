@@ -17,6 +17,9 @@ internal data class SimulatorSpec(
   val deviceType: String,
   val runtime: String,
   val xcrun: String,
+  val slim: Boolean,
+  val simslim: String,
+  val profile: String?,
 ) : Serializable
 
 /**
@@ -79,8 +82,15 @@ abstract class LeaseService :
     val udid = simctl(spec.xcrun, "create", poolName, spec.deviceType, spec.runtime)
     val simulator = ManagedSimulator(udid, poolName, spec.xcrun)
     created += simulator
-    // Stock simulators must be booted: KGP needs a booted device when standalone is false.
-    simctl(spec.xcrun, "bootstatus", udid, "-b")
+    if (spec.slim) {
+      // `simslim on` leaves the simulator booted; there is no fallback to stock if it fails.
+      val profile = listOfNotNull(spec.profile?.let { "--profile" }, spec.profile)
+      run(listOf(spec.simslim, "on", udid) + profile)
+      run(listOf(spec.simslim, "verify", udid) + profile)
+    } else {
+      // Stock simulators must be booted: KGP needs a booted device when standalone is false.
+      simctl(spec.xcrun, "bootstatus", udid, "-b")
+    }
     return simulator
   }
 
