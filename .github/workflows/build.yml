@@ -20,7 +20,7 @@ jobs:
   test:
     name: test (${{ matrix.name }})
     # Apple silicon: KGP only enables iosSimulatorArm64 tests on a matching host.
-    runs-on: macos-15
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +52,7 @@ jobs:
 
   simulator-smoke:
     # KGP only enables iosSimulatorArm64 tests on Apple silicon.
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
