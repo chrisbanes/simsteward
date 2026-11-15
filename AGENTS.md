@@ -16,6 +16,10 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Maintainer references
+
+- KGP simulator tasks, TestKit fixtures, and CI: `docs/agents/kgp-and-testkit.md`.
+
 ### Releases
 
 Changelog and release steps: `docs/agents/releases.md`.
