@@ -56,12 +56,35 @@ on success via `doLast` and on a root-suite failure via a listener installed at
 execution; task completion events provide an idempotent backstop. Matching
 completion event paths across included builds has not been verified.
 
-Before the first lease the service reaps recorded orphans; `simstewardReap`
-provides a manual entry point. An ownership record is written before creation,
-then updated with the UDID. A failed delete leaves the record for recovery.
-Unrecorded simulators with the prefix are reported, not deleted. Each lease
-checks device names before renaming to avoid ambiguous `simctl` lookup. See
-[ADR 0001](../adr/0001-task-named-leases.md) for the naming decision.
+Before the first lease for each distinct configured `xcrun` and absolute normalized
+records directory, the service reaps recorded orphans. `simstewardReap` always
+runs an explicit reap. A project can set `extra["simsteward.xcrun"]` to a String
+executable path; this overrides the build-wide property (including `-P`) and is
+snapshotted after project evaluation. Without a local override, the build-wide
+property or `/usr/bin/xcrun` default applies. Other property paths are unchanged.
+
+An ownership record is written atomically before creation, then updated with
+the UDID. New records retain the configured executable; another executable's
+reap skips them even when its listing lacks that simulator. Legacy records
+have no executable provenance and retain best-effort routing. The record's
+executable is never itself executed. A failed delete leaves its record for
+recovery. Unrecorded simulators with the prefix are reported, not deleted.
+
+Owner identity uses the PID and Java process birth time. When available and
+consistent with Java's timestamp, a record also stores independently read kernel
+birth seconds from `/bin/ps`. If Java birth metadata becomes unavailable, valid
+birth seconds can establish PID reuse. With Java birth time unknown, missing,
+invalid, inconsistent or denied identity evidence retains the owner and names
+the record in a warning; legacy
+records without fallback evidence are retained when Java birth time is unknown.
+Matching seconds conservatively retain an owner even if a PID was reused within
+that second. No age or command-name heuristic permits deletion.
+
+Each lease checks device names before renaming to avoid ambiguous `simctl`
+lookup. The first lease keeps a fresh listing too: creation and boot/slimming
+happen after reaping, outside the lock, and other pools can create or return
+simulators meanwhile. The reaping listing cannot establish current name
+uniqueness. See [ADR 0001](../adr/0001-task-named-leases.md) for the naming decision.
 
 ## TestKit fixtures
 

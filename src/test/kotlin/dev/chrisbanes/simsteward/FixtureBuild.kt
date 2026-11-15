@@ -88,11 +88,22 @@ class FixtureBuild(
         // hold one and, with `fixture.awaitWaiter`, until another lease request is waiting.
         val holders = project.providers.gradleProperty("fixture.holders").orNull?.toInt() ?: 0
         val awaitWaiter = project.providers.gradleProperty("fixture.awaitWaiter").isPresent
+        val holdLease = project.providers.gradleProperty("fixture.holdLease").isPresent
+        val readyFile = File("${root.resolve("lease-ready").absolutePath}")
+        val releaseFile = File("${root.resolve("lease-release").absolutePath}")
         val arrivals = File("${root.resolve("arrivals").absolutePath}")
         doFirst {
           val deviceName = runCatching { device.get() }.getOrNull()
           println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
+          if (holdLease) {
+            readyFile.writeText("ready")
+            val deadline = System.nanoTime() + 60_000_000_000L
+            while (!releaseFile.exists()) {
+              check(System.nanoTime() < deadline) { "fixture external lease barrier timed out" }
+              Thread.sleep(10)
+            }
+          }
           if (holders > 0) {
             arrivals.mkdirs()
             var ordinal = 1
@@ -160,6 +171,36 @@ class FixtureBuild(
     )
   }
 
+  /** A separate command route with its own listing and snapshots, in the same consumer build. */
+  fun installXcrun(name: String, vararg devices: Pair<String, String>): String {
+    val listing = root.resolve("devices-$name.txt")
+    listing.writeText("== Devices ==\n" + devices.joinToString("\n") { (device, udid) -> "    $device ($udid) (Shutdown)" })
+    return fake(
+      name,
+      xcrun().replace(root.resolve("devices.txt").absolutePath, listing.absolutePath)
+        .replace("record-at-create.properties", "record-at-create-$name.properties")
+        .replace("record-after-create.properties", "record-after-create-$name.properties"),
+    )
+  }
+
+  /** Sets the explicit project override after plugin application and checks the executable actually wired. */
+  fun localXcrun(module: String, executable: String) {
+    appendTo(module, "extra[\"simsteward.xcrun\"] = \"$executable\"")
+    expectXcrun(module, executable)
+  }
+
+  /** A configuration-time guard: failure cannot run any simulator task or fall back to real xcrun. */
+  fun expectXcrun(module: String, executable: String) = appendTo(
+    module,
+    """
+    afterEvaluate {
+      check(tasks.named("simstewardReap").get().inputs.properties["xcrun"] == "$executable") {
+        "Wired xcrun did not select the expected executable"
+      }
+    }
+    """.trimIndent(),
+  )
+
   /** The `simctl create` commands the fakes saw. */
   fun creates(): List<String> = commands().filter { it.startsWith("xcrun simctl create ") }
 
@@ -192,6 +233,9 @@ class FixtureBuild(
         prefix=${'$'}(cat '${failFile.absolutePath}')
         case "${'$'}*" in
           "${'$'}prefix"*)
+            if [ "${'$'}1 ${'$'}2" = "simctl create" ]; then
+              cp '$RECORDS_DIR'/"${'$'}3.properties" '${root.resolve("record-at-create.properties")}' 2>/dev/null || true
+            fi
             echo "line one of $name output" >&2
             echo "$name: injected failure for ${'$'}*" >&2
             exit 3
@@ -236,6 +280,9 @@ class FixtureBuild(
       case "${'$'}1 ${'$'}2" in
         "simctl create")
           echo "${'$'}3" > '${root.resolve("pool-name").absolutePath}'
+          if [ -f '${root.resolve("collision-on-create").absolutePath}' ]; then
+            cp '${root.resolve("collision-on-create").absolutePath}' '${root.resolve("devices.txt").absolutePath}'
+          fi
           cp '$RECORDS_DIR'/"${'$'}3.properties" '${root.resolve("record-at-create.properties").absolutePath}' 2>/dev/null || true
           # Each create gets its own UDID, the first one being UDID; mkdir claims a number atomically.
           mkdir -p '${root.resolve("udids").absolutePath}'

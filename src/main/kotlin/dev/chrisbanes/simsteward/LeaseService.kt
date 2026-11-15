@@ -50,7 +50,13 @@ internal abstract class LeaseService :
 
   private class ManagedSimulator(val udid: String, val poolName: String, val xcrun: String, val record: File)
 
-  private var reaped = false
+  private val reaped = mutableSetOf<Pair<String, File>>()
+  private val ownerIdentity by lazy {
+    val owner = ProcessHandle.current()
+    val start = owner.info().startInstant().get().toEpochMilli()
+    mapOf("pid" to owner.pid().toString(), "startTime" to start.toString()) +
+      listOfNotNull(readOwnerStartSeconds(exec, owner.pid())?.takeIf { it == start / 1000 }?.let { "ownerStartTimeSeconds" to it.toString() }).toMap()
+  }
   private val specs = ConcurrentHashMap<SpecKey, SimulatorSpec>()
 
   private val created = mutableListOf<ManagedSimulator>()
@@ -83,6 +89,8 @@ internal abstract class LeaseService :
       }
     }
     // The lease is held from here on, so onFinish returns it even if the checks below fail.
+    // Creation/boot and other pools' creates or returning renames run outside the lock after reap.
+    // Its listing cannot establish that this task name is still free.
     checkNameIsFree(simulator, name)
     simctl(simulator.xcrun, "rename", simulator.udid, name)
     logger.lifecycle("simsteward: $taskPath leased managed simulator ${simulator.udid} (${simulator.poolName}) as $name")
@@ -91,10 +99,10 @@ internal abstract class LeaseService :
   /** Leases an idle simulator to [taskPath], or returns null once the caller may create one. */
   private fun reserve(taskPath: String, spec: SimulatorSpec, ownership: Ownership, maxSimulators: Int): ManagedSimulator? =
     synchronized(lock) {
-      if (!reaped) {
-        // shortcut: reaps once, with the first lease's xcrun and records dir; reap per distinct pair if builds mix them.
+      val key = spec.xcrun to ownership.recordsDir.absoluteFile.normalize()
+      if (key !in reaped) {
         reap(spec.xcrun, ownership.recordsDir)
-        reaped = true
+        reaped += key
       }
       val pool = pools.getOrPut(spec) { mutableListOf() }
       fun idle() = pool.firstOrNull { it !in leases.values && it !in returning }
@@ -157,6 +165,7 @@ internal abstract class LeaseService :
     creating.clear()
     leases.clear()
     returning.clear()
+    reaped.clear()
     failures.firstOrNull()?.let { first -> throw first.apply { failures.drop(1).forEach(::addSuppressed) } }
   }
 
@@ -165,12 +174,10 @@ internal abstract class LeaseService :
     val poolName = "$NAME_PREFIX-${UUID.randomUUID().toString().take(8)}"
     // The record is written first so that an interruption inside `create` leaves a trace by name.
     val record = ownership.recordsDir.resolve("$poolName.properties")
-    val owner = ProcessHandle.current()
-    val values = mapOf(
+    val values = ownerIdentity + mapOf(
       "name" to poolName,
       "buildRoot" to ownership.buildRoot,
-      "pid" to owner.pid().toString(),
-      "startTime" to owner.info().startInstant().get().toEpochMilli().toString(),
+      "xcrun" to spec.xcrun,
     )
     writeRecord(record, values)
     // A failed create leaves the record behind: it may still have made the simulator.
@@ -202,18 +209,30 @@ internal abstract class LeaseService :
    * the simsteward prefix but have no record. Only a record's UDID, or its name when the UDID was
    * never known, selects a simulator to delete.
    */
-  internal fun reap(xcrun: String, recordsDir: File) = synchronized(lock) {
+  internal fun reap(
+    xcrun: String,
+    recordsDir: File,
+    observe: (Long, Long?) -> OwnerProcess = ::observeOwner,
+  ) = synchronized(lock) {
     val devices = listDevices(xcrun)
     val records = recordsDir.listFiles { f -> f.extension == "properties" }.orEmpty().mapNotNull { file ->
       val record = readRecord(file)
-      if (record["name"] == null || record["pid"]?.toLongOrNull() == null || record["startTime"]?.toLongOrNull() == null) {
+      if (record["name"] == null || record["pid"]?.toLongOrNull()?.takeIf { it > 0 } == null || record["startTime"]?.toLongOrNull()?.takeIf { it > 0 } == null) {
         logger.warn("Ignoring unreadable simsteward record $file")
         null
       } else {
         file to record
       }
     }
-    records.filterNot { (_, record) -> ownerIsAlive(record.getValue("pid").toLong(), record.getValue("startTime").toLong()) }
+    records.filter { (_, record) -> record["xcrun"] == null || record["xcrun"] == xcrun }
+      .filterNot { (file, record) ->
+        val pid = record.getValue("pid").toLong()
+        val start = record.getValue("startTime").toLong()
+        val seconds = record["ownerStartTimeSeconds"]?.toLongOrNull()?.takeIf { it > 0 && it == start / 1000 }
+        val alive = ownerIsAlive(start, seconds) { observe(pid, seconds) }
+        if (alive == null) logger.warn("Cannot establish owner identity for simsteward record $file; leaving it alone.")
+        alive != false
+      }
       .forEach { (file, record) ->
         val udid = record["udid"]
         val targets = devices.filter { (name, id) -> if (udid != null) id == udid else name == record["name"] }
@@ -232,11 +251,12 @@ internal abstract class LeaseService :
   private fun listDevices(xcrun: String): List<Pair<String, String>> =
     simctl(xcrun, "list", "devices").lines().mapNotNull { DEVICE_LINE.matchEntire(it)?.destructured?.let { (name, udid) -> name to udid } }
 
-  private fun ownerIsAlive(pid: Long, startTime: Long): Boolean = ProcessHandle.of(pid).map { handle ->
-    // shortcut: an owner whose start time is unknown counts as alive, so its simulators leak until a later
-    // build sees the PID gone; compare another process attribute if that leaks in practice.
-    handle.info().startInstant().map { it.toEpochMilli() == startTime }.orElse(true)
-  }.orElse(false)
+  private fun observeOwner(pid: Long, seconds: Long?): OwnerProcess {
+    val handle = ProcessHandle.of(pid).orElse(null)
+    if (handle == null || !handle.isAlive) return OwnerProcess(false, null, null)
+    val javaStart = handle.info().startInstant().orElse(null)?.toEpochMilli()
+    return OwnerProcess(true, javaStart, if (javaStart == null && seconds != null) readOwnerStartSeconds(exec, pid) else null)
+  }
 
   private fun simctl(xcrun: String, vararg arguments: String): String = run(listOf(xcrun, "simctl", *arguments))
 
