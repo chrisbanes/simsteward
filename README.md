@@ -4,7 +4,7 @@ Simsteward is a Gradle plugin for Kotlin Multiplatform builds. It gives the buil
 
 ## Setup
 
-Requires Gradle 8.14 and Kotlin Gradle plugin 2.2.0 or newer.
+Requires JDK 17, Gradle 8.14 and Kotlin Gradle plugin 2.2.0 or newer.
 
 In `settings.gradle.kts`:
 

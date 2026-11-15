@@ -79,7 +79,7 @@ abstract class SimstewardPlugin @Inject constructor(
           // Inputs reflect only what is pinned; unpinned defaults are resolved through simctl at execution, never here.
           // targetName is null now, so each lookup waits until Gradle reads the input.
           fun pinned(pick: (PlatformSettings) -> Provider<String>): Provider<String> = providers.provider {
-            families.get()[task.targetName]?.let(Platform::of)?.let { pick(extension.of(it)).orNull }
+            task.targetName?.let { families.get()[it] }?.let(Platform::of)?.let { pick(extension.of(it)).orNull }
           }
           task.inputs.property("simsteward.deviceType", pinned { it.deviceType }).optional(true)
           task.inputs.property("simsteward.runtime", pinned { it.runtime }).optional(true)
