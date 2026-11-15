@@ -126,12 +126,20 @@ class FixtureBuild(
   /** Makes the fakes fail every command that starts with [command], such as `simctl create`. */
   fun failOn(command: String) = failFile.writeText(command)
 
+  /** Makes the fake `simctl list devices` report these simulators, as `name to udid` pairs. */
+  fun listDevices(vararg devices: Pair<String, String>) {
+    root.resolve("devices.txt").writeText(
+      "== Devices ==\n-- iOS 27.0 --\n" + devices.joinToString("") { (name, udid) -> "    $name ($udid) (Shutdown) \n" },
+    )
+  }
+
   fun commands(): List<String> = if (commandLog.exists()) commandLog.readLines() else emptyList()
 
   fun clearCommands() = commandLog.delete()
 
   fun runner(vararg arguments: String): GradleRunner = GradleRunner.create()
     .withProjectDir(root)
+    .withTestKitDir(TEST_KIT_DIR)
     .withGradleVersion(GRADLE_VERSION)
     .forwardOutput()
     .withArguments(*arguments, "--no-scan", "--stacktrace")
@@ -173,11 +181,22 @@ class FixtureBuild(
     private val TEST_REPOSITORY = System.getProperty("simsteward.testRepository")
     private val SIMSTEWARD_VERSION = System.getProperty("simsteward.version")
 
+    /** Simsteward's ownership records live under the Gradle user home, which is this TestKit dir. */
+    val TEST_KIT_DIR = File(System.getProperty("java.io.tmpdir"), ".gradle-test-kit-${System.getProperty("user.name")}")
+    val RECORDS_DIR = TEST_KIT_DIR.resolve("simsteward/records")
+
+    // The create and bootstatus cases snapshot the ownership record as the build owns it.
     private fun FixtureBuild.xcrun() = """
       case "${'$'}1 ${'$'}2" in
-        "simctl create") echo "$UDID" ;;
+        "simctl create")
+          echo "${'$'}3" > '${root.resolve("pool-name").absolutePath}'
+          cp '$RECORDS_DIR'/"${'$'}3.properties" '${root.resolve("record-at-create.properties").absolutePath}' 2>/dev/null || true
+          echo "$UDID" ;;
+        "simctl bootstatus")
+          cp '$RECORDS_DIR'/"${'$'}(cat '${root.resolve("pool-name").absolutePath}')".properties '${root.resolve("record-after-create.properties").absolutePath}' 2>/dev/null || true ;;
         "simctl list")
           case "${'$'}3 ${'$'}4" in
+            "devices "*) cat '${root.resolve("devices.txt").absolutePath}' 2>/dev/null || true ;;
             "-j runtimes") cat '${root.resolve("bin/runtimes.json").absolutePath}' ;;
             "-j devicetypes") cat '${root.resolve("bin/devicetypes.json").absolutePath}' ;;
           esac ;;
