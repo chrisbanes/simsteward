@@ -98,7 +98,9 @@ class FixtureBuild(
             fun leaseIsWaiting() = Thread.getAllStackTraces().any { (thread, frames) ->
               thread.state == Thread.State.WAITING && frames.any { it.className.startsWith("dev.chrisbanes.simsteward.") }
             }
-            fun ready() = arrivals.list()!!.size >= holders && (!awaitWaiter || leaseIsWaiting())
+            // Latched: once one holder sees the barrier met, the waiter it frees no longer waits, so others must not re-check.
+            val open = File(arrivals, "open")
+            fun ready() = open.exists() || (arrivals.list()!!.count { it != "open" } >= holders && (!awaitWaiter || leaseIsWaiting()) && open.mkdir())
             val deadline = System.nanoTime() + 60_000_000_000L
             while (ordinal <= holders && !ready()) {
               check(System.nanoTime() < deadline) { "fixture barrier timed out in ${'$'}path" }

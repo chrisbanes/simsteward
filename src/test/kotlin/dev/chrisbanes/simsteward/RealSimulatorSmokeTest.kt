@@ -24,6 +24,9 @@ class RealSimulatorSmokeTest {
   fun realKmpTestRunsOnSlimManagedSimulatorAndLeavesNothingBehind() {
     assertEquals(emptyList(), managedSimulators(), "managed simulators exist before the run")
     writeFixture()
+    // KGP downloads Kotlin/Native at execution but reads its platform klibs at configuration, so a build on a fresh
+    // ~/.konan (every CI run) invalidates the next build's configuration cache and relinks. Settle the toolchain first.
+    runner().withArguments(":lib:linkDebugTestIosSimulatorArm64", "--no-scan", "--stacktrace").build()
 
     val first = runner().build()
     assertEquals(TaskOutcome.SUCCESS, first.task(task)?.outcome, first.output)
@@ -83,7 +86,7 @@ class RealSimulatorSmokeTest {
   }
 
   private companion object {
-    // Matches a Kotlin/Native toolchain that CI and dev machines already cache.
+    // Matches a Kotlin/Native toolchain dev machines already cache.
     const val KGP_VERSION = "2.3.21"
     const val LEASE_LINE = "leased managed simulator"
   }
