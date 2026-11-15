@@ -5,7 +5,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 plugins {
   `java-gradle-plugin`
   `maven-publish`
-  kotlin("jvm") version "2.3.21"
+  kotlin("jvm") version "2.4.21"
 }
 
 group = "dev.chrisbanes.simsteward"
