@@ -13,6 +13,7 @@ dependencyResolutionManagement {
     google {
       mavenContent {
         includeGroupAndSubgroups("com.android")
+        includeGroupAndSubgroups("androidx")
       }
     }
   }

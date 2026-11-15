@@ -30,7 +30,7 @@ kotlin {
   }
 }
 
-val metalavaVersion = "1.0.0-alpha14"
+val metalavaVersion = "1.0.0-alpha16"
 
 metalava {
   filename.set("api/api.txt")
