@@ -88,12 +88,12 @@ class PoolGrowthTest {
     val device = build.build(":lib:iosSimulatorArm64Test").device("lib")
     build.root.resolve("lib/build").deleteRecursively()
     build.clearCommands()
-    build.addOtherSimulator(device, "OTHER-UDID")
+    build.listDevices(device to OTHER_UDID)
 
     val result = build.buildAndFail(":lib:iosSimulatorArm64Test", "--rerun-tasks")
 
     assertTrue(
-      "Another simulator, OTHER-UDID, is already named $device, so simctl could pick either one. " +
+      "Another simulator, $OTHER_UDID, is already named $device, so simctl could pick either one. " +
         "Delete or rename that simulator." in result.output,
       result.output,
     )
@@ -119,6 +119,10 @@ class PoolGrowthTest {
     )
     assertEquals(2, build.commands().count { it.startsWith("test ") }, build.commands().toString())
     assertTrue("fixture test failure" in result.output, result.output)
+  }
+
+  private companion object {
+    const val OTHER_UDID = "0A1B2C3D-0000-4000-8000-000000000001"
   }
 
   private fun tasks(vararg modules: String) = modules.map { ":$it:iosSimulatorArm64Test" }.toTypedArray()

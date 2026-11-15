@@ -1,12 +1,12 @@
 package dev.chrisbanes.simsteward
 
-import groovy.json.JsonSlurper
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.Serializable
+import java.util.Properties
 import java.util.UUID
 import javax.inject.Inject
 import org.gradle.api.GradleException
-import org.gradle.api.logging.Logger
 import org.gradle.api.logging.Logging
 import org.gradle.api.services.BuildService
 import org.gradle.api.services.BuildServiceParameters
@@ -20,7 +20,16 @@ internal data class SimulatorSpec(
   val deviceType: String,
   val runtime: String,
   val xcrun: String,
+  val slim: Boolean,
+  val simslim: String,
+  val profile: String?,
 ) : Serializable
+
+/** Where this build's ownership records live (under the Gradle user home) and which build owns them. */
+internal data class Ownership(val recordsDir: File, val buildRoot: String) : Serializable
+
+/** The slimming half of a [SimulatorSpec]. */
+internal data class Slimming(val slim: Boolean, val simslim: String, val profile: String?) : Serializable
 
 /**
  * Holds every pool of managed simulators in the build.
@@ -36,7 +45,9 @@ abstract class LeaseService :
   @get:Inject
   internal abstract val exec: ExecOperations
 
-  private class ManagedSimulator(val udid: String, val poolName: String, val xcrun: String)
+  private class ManagedSimulator(val udid: String, val poolName: String, val xcrun: String, val record: File)
+
+  private var reaped = false
 
   private val created = mutableListOf<ManagedSimulator>()
   private val pools = mutableMapOf<SimulatorSpec, MutableList<ManagedSimulator>>()
@@ -44,12 +55,20 @@ abstract class LeaseService :
   private val leases = mutableMapOf<String, ManagedSimulator>()
   private val lock = Object()
 
+  /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */
+  internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String, slimming: Slimming): SimulatorSpec =
+    if (runtime != null && deviceType != null) {
+      SimulatorSpec(deviceType, runtime, xcrun, slimming.slim, slimming.simslim, slimming.profile)
+    } else {
+      resolveSpec(platform, simctl(xcrun, "list", "-j", "runtimes"), runtime, deviceType, xcrun, slimming)
+    }
+
   /**
    * Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name], growing the pool
    * up to [maxSimulators] or waiting for a returned lease.
    */
-  internal fun lease(taskPath: String, name: String, spec: SimulatorSpec, maxSimulators: Int) {
-    val simulator = reserve(taskPath, spec, maxSimulators) ?: create(spec).also { created ->
+  internal fun lease(taskPath: String, name: String, spec: SimulatorSpec, ownership: Ownership, maxSimulators: Int) {
+    val simulator = reserve(taskPath, spec, ownership, maxSimulators) ?: create(spec, ownership).also { created ->
       synchronized(lock) {
         creating.merge(spec, -1, Int::plus)
         pools.getValue(spec) += created
@@ -63,31 +82,36 @@ abstract class LeaseService :
   }
 
   /** Leases an idle simulator to [taskPath], or returns null once the caller may create one. */
-  private fun reserve(taskPath: String, spec: SimulatorSpec, maxSimulators: Int): ManagedSimulator? = synchronized(lock) {
-    val pool = pools.getOrPut(spec) { mutableListOf() }
-    fun idle() = pool.firstOrNull { it !in leases.values }
-    var waiting = false
-    while (idle() == null && pool.size + creating.getOrDefault(spec, 0) >= maxSimulators) {
-      if (!waiting) {
-        waiting = true
-        val simulators = if (maxSimulators == 1) "simulator" else "simulators"
-        logger.lifecycle("simsteward: $taskPath is waiting for a returned lease: its pool is at its cap of $maxSimulators $simulators")
+  private fun reserve(taskPath: String, spec: SimulatorSpec, ownership: Ownership, maxSimulators: Int): ManagedSimulator? =
+    synchronized(lock) {
+      if (!reaped) {
+        reap(spec.xcrun, ownership.recordsDir)
+        reaped = true
       }
-      lock.wait()
+      val pool = pools.getOrPut(spec) { mutableListOf() }
+      fun idle() = pool.firstOrNull { it !in leases.values }
+      var waiting = false
+      while (idle() == null && pool.size + creating.getOrDefault(spec, 0) >= maxSimulators) {
+        if (!waiting) {
+          waiting = true
+          val simulators = if (maxSimulators == 1) "simulator" else "simulators"
+          logger.lifecycle("simsteward: $taskPath is waiting for a returned lease: its pool is at its cap of $maxSimulators $simulators")
+        }
+        lock.wait()
+      }
+      idle()?.also { leases[taskPath] = it } ?: run {
+        creating.merge(spec, 1, Int::plus)
+        null
+      }
     }
-    idle()?.also { leases[taskPath] = it } ?: run {
-      creating.merge(spec, 1, Int::plus)
-      null
-    }
-  }
 
+  /** `simctl` silently picks one of several same-named simulators (ADR 0001). */
   private fun checkNameIsFree(simulator: ManagedSimulator, name: String) {
-    @Suppress("UNCHECKED_CAST")
-    val devices = (JsonSlurper().parseText(simctl(simulator.xcrun, "list", "devices", "-j")) as Map<String, Any?>)["devices"]
-      as Map<String, List<Map<String, Any?>>>
-    val other = devices.values.flatten().firstOrNull { it["name"] == name && it["udid"] != simulator.udid } ?: return
+    val other = simctl(simulator.xcrun, "list", "devices").lines()
+      .mapNotNull { DEVICE_LINE.matchEntire(it)?.destructured }
+      .firstOrNull { (n, udid) -> n == name && udid != simulator.udid } ?: return
     throw GradleException(
-      "Another simulator, ${other["udid"]}, is already named $name, so simctl could pick either one. " +
+      "Another simulator, ${other.component2()}, is already named $name, so simctl could pick either one. " +
         "Delete or rename that simulator.",
     )
   }
@@ -108,7 +132,13 @@ abstract class LeaseService :
   }
 
   override fun close(): Unit = synchronized(lock) {
-    val failures = created.mapNotNull { runCatching { simctl(it.xcrun, "delete", it.udid) }.exceptionOrNull() }
+    val failures = created.mapNotNull {
+      runCatching {
+        simctl(it.xcrun, "delete", it.udid)
+        // Kept when deletion fails, so a later build can reap it.
+        it.record.delete()
+      }.exceptionOrNull()
+    }
     created.clear()
     pools.clear()
     creating.clear()
@@ -117,13 +147,31 @@ abstract class LeaseService :
   }
 
   /** Runs outside the lock so that pools create simulators concurrently. */
-  private fun create(spec: SimulatorSpec): ManagedSimulator = try {
+  private fun create(spec: SimulatorSpec, ownership: Ownership): ManagedSimulator = try {
     val poolName = "$NAME_PREFIX-${UUID.randomUUID().toString().take(8)}"
+    // The record is written first so that an interruption inside `create` leaves a trace by name.
+    val record = ownership.recordsDir.resolve("$poolName.properties")
+    val owner = ProcessHandle.current()
+    writeRecord(record, mapOf(
+      "name" to poolName,
+      "buildRoot" to ownership.buildRoot,
+      "pid" to owner.pid().toString(),
+      "startTime" to owner.info().startInstant().get().toEpochMilli().toString(),
+    ))
+    // A failed create leaves the record behind: it may still have made the simulator.
     val udid = simctl(spec.xcrun, "create", poolName, spec.deviceType, spec.runtime)
-    val simulator = ManagedSimulator(udid, poolName, spec.xcrun)
+    writeRecord(record, readRecord(record) + ("udid" to udid))
+    val simulator = ManagedSimulator(udid, poolName, spec.xcrun, record)
     synchronized(lock) { created += simulator }
-    // Stock simulators must be booted: KGP needs a booted device when standalone is false.
-    simctl(spec.xcrun, "bootstatus", udid, "-b")
+    if (spec.slim) {
+      // `simslim on` leaves the simulator booted; there is no fallback to stock if it fails.
+      val profile = listOfNotNull(spec.profile?.let { "--profile" }, spec.profile)
+      run(listOf(spec.simslim, "on", udid) + profile)
+      run(listOf(spec.simslim, "verify", udid) + profile)
+    } else {
+      // Stock simulators must be booted: KGP needs a booted device when standalone is false.
+      simctl(spec.xcrun, "bootstatus", udid, "-b")
+    }
     simulator
   } catch (failure: Throwable) {
     synchronized(lock) {
@@ -132,6 +180,55 @@ abstract class LeaseService :
     }
     throw failure
   }
+
+  /**
+   * Deletes the simulator of every record whose owner is gone, and reports simulators that carry
+   * the simsteward prefix but have no record. Only a record's UDID, or its name when the UDID was
+   * never known, selects a simulator to delete.
+   */
+  internal fun reap(xcrun: String, recordsDir: File) = synchronized(lock) {
+    val devices = simctl(xcrun, "list", "devices").lines().mapNotNull { DEVICE_LINE.matchEntire(it)?.destructured }
+      .map { (name, udid) -> name to udid }
+    val records = recordsDir.listFiles { f -> f.extension == "properties" }.orEmpty().mapNotNull { file ->
+      val record = readRecord(file)
+      val name = record["name"]
+      val pid = record["pid"]?.toLongOrNull()
+      val start = record["startTime"]?.toLongOrNull()
+      if (name == null || pid == null || start == null) {
+        logger.warn("Ignoring unreadable simsteward record $file")
+        null
+      } else {
+        Triple(file, record, ownerIsAlive(pid, start))
+      }
+    }
+    records.filter { !it.third }.forEach { (file, record, _) ->
+      val udid = record["udid"]
+      val targets = devices.filter { (name, id) -> if (udid != null) id == udid else name == record["name"] }
+      val failed = targets.any { (name, id) ->
+        runCatching { simctl(xcrun, "delete", id) }.onFailure { logger.warn("Could not reap simulator $name ($id): ${it.message}") }.isFailure
+      }
+      if (!failed) file.delete()
+    }
+    val recordedNames = records.mapNotNull { it.second["name"] }.toSet()
+    val recordedUdids = records.mapNotNull { it.second["udid"] }.toSet()
+    devices.filter { (name, id) -> name.startsWith("$NAME_PREFIX-") && name !in recordedNames && id !in recordedUdids }
+      .forEach { (name, id) -> logger.warn("Found simulator $name ($id) with the simsteward prefix but no ownership record; leaving it alone.") }
+  }
+
+  private fun ownerIsAlive(pid: Long, startTime: Long): Boolean = ProcessHandle.of(pid).map { handle ->
+    // Without a start time we cannot prove the PID was reused, so the owner counts as alive.
+    handle.info().startInstant().map { it.toEpochMilli() == startTime }.orElse(true)
+  }.orElse(false)
+
+  private fun writeRecord(file: File, values: Map<String, String>) {
+    file.parentFile.mkdirs()
+    val properties = Properties().apply { values.forEach { (k, v) -> setProperty(k, v) } }
+    file.writer().use { properties.store(it, null) }
+  }
+
+  private fun readRecord(file: File): Map<String, String> = runCatching {
+    Properties().apply { file.reader().use(::load) }.let { p -> p.stringPropertyNames().associateWith { p.getProperty(it) } }
+  }.getOrDefault(emptyMap())
 
   private fun simctl(xcrun: String, vararg arguments: String): String = run(listOf(xcrun, "simctl", *arguments))
 
@@ -153,6 +250,7 @@ abstract class LeaseService :
 
   private companion object {
     const val STDERR_TAIL_LINES = 20
-    val logger: Logger = Logging.getLogger(LeaseService::class.java)
+    val DEVICE_LINE = Regex("""^\s+(.+) \(([0-9A-Fa-f-]{36})\) \(.*""")
+    val logger = Logging.getLogger(LeaseService::class.java)
   }
 }

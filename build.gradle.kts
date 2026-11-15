@@ -1,3 +1,4 @@
+import org.gradle.api.attributes.plugin.GradlePluginApiVersion
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
@@ -51,8 +52,34 @@ publishing {
   }
 }
 
+// Minimum supported versions, declared in the published metadata and exercised by the CI matrix.
+val minGradle = "8.14"
+val minKgp = "2.2.0"
+
+// Gradle's plugin resolution picks the variant by this attribute, so 8.14 is the declared minimum.
+listOf("apiElements", "runtimeElements").forEach { name ->
+  configurations.named(name) {
+    attributes.attribute(
+      GradlePluginApiVersion.GRADLE_PLUGIN_API_VERSION_ATTRIBUTE,
+      objects.named(minGradle),
+    )
+  }
+}
+
+publishing {
+  publications.withType<MavenPublication>().configureEach {
+    pom {
+      properties.put("simsteward.minGradle", minGradle)
+      properties.put("simsteward.minKgp", minKgp)
+    }
+  }
+}
+
 tasks.test {
   useJUnitPlatform()
+  // `-Psimsteward.test.gradle=<version> -Psimsteward.test.kgp=<version>` select the fixture versions.
+  systemProperty("simsteward.test.gradle", providers.gradleProperty("simsteward.test.gradle").getOrElse(minGradle))
+  systemProperty("simsteward.test.kgp", providers.gradleProperty("simsteward.test.kgp").getOrElse(minKgp))
   dependsOn("publishAllPublicationsToTestRepository")
   systemProperty("simsteward.testRepository", testRepository.get().asFile.absolutePath)
   systemProperty("simsteward.version", version.toString())
