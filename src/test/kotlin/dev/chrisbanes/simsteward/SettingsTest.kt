@@ -16,8 +16,6 @@ class SettingsTest {
   private val lib2 = ":lib2:iosSimulatorArm64Test"
   private val otherType = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
 
-  private fun FixtureBuild.creates() = commands().filter { it.startsWith("xcrun simctl create") }
-
   @Test
   fun propertyAppliesToEveryProjectAndExtensionOverridesIt() {
     val build = FixtureBuild(directory)

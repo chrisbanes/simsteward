@@ -1,7 +1,6 @@
 package dev.chrisbanes.simsteward
 
 import java.io.File
-import java.util.Properties
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -25,9 +24,9 @@ class ReapingTest {
     // Stock, so the fake xcrun's bootstatus runs and snapshots the record after create.
     build.build(task, "-Psimsteward.slim=false")
 
-    val pool = build.root.resolve("pool-name").readText().trim()
-    val atCreate = properties(build.root.resolve("record-at-create.properties"))
-    val afterCreate = properties(build.root.resolve("record-after-create.properties"))
+    val pool = build.poolName()
+    val atCreate = readRecord(build.root.resolve("record-at-create.properties"))
+    val afterCreate = readRecord(build.root.resolve("record-after-create.properties"))
     assertEquals(pool, atCreate["name"])
     assertEquals(build.root.canonicalPath, File(atCreate["buildRoot"]!!).canonicalPath)
     assertTrue(atCreate["pid"]!!.toLong() > 0 && atCreate["startTime"]!!.toLong() > 0)
@@ -130,9 +129,6 @@ class ReapingTest {
 
   private fun record(name: String) = FixtureBuild.RECORDS_DIR.resolve("$name.properties")
 
-  private fun properties(file: File) = Properties().apply { file.reader().use(::load) }
-    .let { p -> p.stringPropertyNames().associateWith { p.getProperty(it) } }
-
   private fun ownStartTime() = ProcessHandle.current().info().startInstant().get().toEpochMilli()
 
   private fun deadProcess(): Pair<Long, Long> {
@@ -149,15 +145,17 @@ class ReapingTest {
     pid: Long = ProcessHandle.current().pid(),
     startTime: Long = ownStartTime(),
   ): File {
-    val file = record(name).also { it.parentFile.mkdirs() }
-    val properties = Properties().apply {
-      setProperty("name", name)
-      udid?.let { setProperty("udid", it) }
-      setProperty("buildRoot", "/planted")
-      setProperty("pid", pid.toString())
-      setProperty("startTime", startTime.toString())
-    }
-    file.writer().use { properties.store(it, null) }
+    val file = record(name)
+    writeRecord(
+      file,
+      listOfNotNull(
+        "name" to name,
+        udid?.let { "udid" to it },
+        "buildRoot" to "/planted",
+        "pid" to pid.toString(),
+        "startTime" to startTime.toString(),
+      ).toMap(),
+    )
     return file.also(planted::add)
   }
 

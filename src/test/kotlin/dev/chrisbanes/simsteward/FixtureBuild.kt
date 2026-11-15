@@ -25,24 +25,7 @@ class FixtureBuild(
 
   init {
     root.mkdirs()
-    root.resolve("settings.gradle.kts").writeText(
-      """
-      pluginManagement {
-        repositories {
-          maven(url = "${File(TEST_REPOSITORY).toURI()}")
-          gradlePluginPortal()
-          mavenCentral()
-        }
-      }
-      dependencyResolutionManagement {
-        repositories {
-          mavenCentral()
-        }
-      }
-      rootProject.name = "fixture"
-      include(":lib")
-      """.trimIndent(),
-    )
+    root.resolve("settings.gradle.kts").writeText(settings("fixture") + "\ninclude(\":lib\")\n")
     root.resolve("gradle.properties").writeText(
       """
       org.gradle.configuration-cache=true
@@ -172,6 +155,12 @@ class FixtureBuild(
     )
   }
 
+  /** The `simctl create` commands the fakes saw. */
+  fun creates(): List<String> = commands().filter { it.startsWith("xcrun simctl create ") }
+
+  /** The name of the pool simulator most recently created, from the fake `simctl create`. */
+  fun poolName(): String = root.resolve("pool-name").readText().trim()
+
   fun commands(): List<String> = if (commandLog.exists()) commandLog.readLines() else emptyList()
 
   fun clearCommands() = commandLog.delete()
@@ -218,6 +207,19 @@ class FixtureBuild(
     const val UDID = "23AE16CF-D297-4A91-A615-5BA5B20D700B"
 
     private val TEST_REPOSITORY = System.getProperty("simsteward.testRepository")
+
+    /** A settings script that resolves the plugin from the test repository, without any `include`. */
+    fun settings(rootName: String) = """
+      pluginManagement {
+        repositories {
+          maven(url = "${File(TEST_REPOSITORY).toURI()}")
+          gradlePluginPortal()
+          mavenCentral()
+        }
+      }
+      dependencyResolutionManagement { repositories { mavenCentral() } }
+      rootProject.name = "$rootName"
+    """.trimIndent()
     private val SIMSTEWARD_VERSION = System.getProperty("simsteward.version")
 
     /** Simsteward's ownership records live under the Gradle user home, which is this TestKit dir. */
@@ -241,7 +243,6 @@ class FixtureBuild(
           case "${'$'}3 ${'$'}4" in
             "devices "*) cat '${root.resolve("devices.txt").absolutePath}' 2>/dev/null || true ;;
             "-j runtimes") cat '${root.resolve("bin/runtimes.json").absolutePath}' ;;
-            "-j devicetypes") cat '${root.resolve("bin/devicetypes.json").absolutePath}' ;;
           esac ;;
       esac
     """

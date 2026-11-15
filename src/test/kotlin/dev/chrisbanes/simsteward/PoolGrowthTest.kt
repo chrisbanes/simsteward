@@ -61,13 +61,13 @@ class PoolGrowthTest {
 
   @Test
   fun sequentialTasksAtTheDefaultCapShareOneSimulator() {
-    assertEquals(List(BUILDS) { 1 }, sequentialBuilds { build(*it) }.map { it.creates().size })
+    assertEquals(List(BUILDS) { 1 }, sequentialBuilds { build(*it) }.map { b -> b.count { it.startsWith("xcrun simctl create ") } })
   }
 
   @Test
   fun sequentialFailingTasksAtTheDefaultCapShareOneSimulator() {
     val builds = sequentialBuilds { buildAndFail(*it, "--continue", "-Pfixture.failTest") }
-    assertEquals(List(BUILDS) { 1 }, builds.map { it.creates().size })
+    assertEquals(List(BUILDS) { 1 }, builds.map { b -> b.count { it.startsWith("xcrun simctl create ") } })
     assertEquals(List(BUILDS) { SEQUENTIAL_MODULES.size }, builds.map { b -> b.count { it.startsWith("test ") } })
   }
 
@@ -169,10 +169,6 @@ class PoolGrowthTest {
   }
 
   private fun tasks(vararg modules: String) = modules.map { ":$it:iosSimulatorArm64Test" }.toTypedArray()
-
-  private fun FixtureBuild.creates() = commands().creates()
-
-  private fun List<String>.creates() = filter { it.startsWith("xcrun simctl create ") }
 
   /** UDID to device name, for each rename to a task's name. */
   private fun FixtureBuild.leaseRenames(): Map<String, String> = commands()

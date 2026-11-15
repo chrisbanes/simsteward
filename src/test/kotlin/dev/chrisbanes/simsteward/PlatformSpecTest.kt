@@ -14,7 +14,7 @@ class PlatformSpecTest {
   private val rt = "com.apple.CoreSimulator.SimRuntime"
 
   private fun creates(build: FixtureBuild) =
-    build.commands().filter { it.startsWith("xcrun simctl create") }.map { it.split(" ").drop(4) }
+    build.creates().map { it.split(" ").drop(4) }
 
   @Test
   fun eachPlatformLeasesASimulatorOfItsOwnPlatform() {
