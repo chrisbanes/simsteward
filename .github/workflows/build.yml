@@ -22,7 +22,7 @@ jobs:
             java: 21
             args: -Psimsteward.test.gradle=9.9.1 -Psimsteward.test.kgp=2.4.21
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -39,7 +39,7 @@ jobs:
     # KGP only enables iosSimulatorArm64 tests on Apple silicon.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
