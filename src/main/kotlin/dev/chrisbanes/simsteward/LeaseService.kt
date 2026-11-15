@@ -17,6 +17,10 @@ internal data class SimulatorSpec(
   val deviceType: String,
   val runtime: String,
   val xcrun: String,
+  val slim: Boolean = true,
+  val profile: String? = null,
+  // Carried for pool growth (#6); part of the pool key until that ticket decides otherwise.
+  val maxSimulators: Int = 1,
 ) : Serializable
 
 /**

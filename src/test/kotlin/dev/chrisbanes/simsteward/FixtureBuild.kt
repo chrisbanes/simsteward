@@ -51,10 +51,16 @@ class FixtureBuild(
       """.trimIndent() + if (pinned) "\nsimsteward.ios.deviceType=$DEVICE_TYPE\nsimsteward.ios.runtime=$RUNTIME\n" else "\n",
     )
     installRuntimes(RUNTIMES_JSON)
-    root.resolve("lib").mkdirs()
+    addModule("lib")
+  }
+
+  /** Adds a KMP module with simsteward applied and a fake test binary, and includes it in settings. */
+  fun addModule(name: String) {
+    if (name != "lib") root.resolve("settings.gradle.kts").appendText("\ninclude(\":$name\")\n")
+    root.resolve(name).mkdirs()
     // The fake test binary lets KGP's test task run without compiling Kotlin/Native.
-    root.resolve("lib/test.kexe").writeText("")
-    root.resolve("lib/build.gradle.kts").writeText(
+    root.resolve("$name/test.kexe").writeText("")
+    root.resolve("$name/build.gradle.kts").writeText(
       """
       import java.io.File
       import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
@@ -74,7 +80,8 @@ class FixtureBuild(
         executable(file("test.kexe"))
         val failTest = project.providers.gradleProperty("fixture.failTest").isPresent
         doFirst {
-          println("fixture: ${'$'}path device=${'$'}{device.get()} standalone=${'$'}{standalone.get()}")
+          val deviceName = runCatching { device.get() }.getOrNull()
+          println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
           if (failTest) throw GradleException("fixture test failure")
           throw StopExecutionException()
@@ -87,8 +94,17 @@ class FixtureBuild(
   }
 
   /** Appends Kotlin DSL to the `lib` module's build script. */
-  fun appendToLib(script: String) {
-    root.resolve("lib/build.gradle.kts").appendText("\n" + script.trimIndent() + "\n")
+  fun appendToLib(script: String) = appendTo("lib", script)
+
+  /** Configures the `simsteward {}` extension in [module]; the fixture applies the plugin without type-safe accessors. */
+  fun simsteward(module: String, block: String) = appendTo(
+    module,
+    "extensions.configure<dev.chrisbanes.simsteward.SimstewardExtension>(\"simsteward\") {\n$block\n}",
+  )
+
+  /** Appends Kotlin DSL to [module]'s build script. */
+  fun appendTo(module: String, script: String) {
+    root.resolve("$module/build.gradle.kts").appendText("\n" + script.trimIndent() + "\n")
   }
 
   /** Sets what the fake `xcrun simctl list -j runtimes` prints. */

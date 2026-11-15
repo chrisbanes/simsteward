@@ -23,7 +23,20 @@ abstract class SimstewardPlugin @Inject constructor(
       val buildRootHash = sha256(layout.settingsDirectory.asFile.absolutePath).take(8)
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
 
+      val extension = extensions.create("simsteward", SimstewardExtension::class.java)
+      extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
+      extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(true))
+      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map { it.toInt() }.orElse(1))
+      Platform.entries.forEach { platform ->
+        val settings = extension.of(platform)
+        listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime, "profile" to settings.profile)
+          .forEach { (name, property) -> property.convention(providers.gradleProperty("simsteward.${platform.property}.$name")) }
+      }
+
       val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets
+      // Deferred so that the project's own `simsteward {}` block has run.
+      afterEvaluate {
+      if (!extension.enabled.get()) return@afterEvaluate
       tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
         val kotlinTarget = targets.getByName(checkNotNull(task.targetName)) as KotlinNativeTarget
         val platform = Platform.of(kotlinTarget.konanTarget.family) ?: return@configureEach
@@ -35,10 +48,14 @@ abstract class SimstewardPlugin @Inject constructor(
           leases,
           name,
           platform,
-          providers.gradleProperty("simsteward.${platform.property}.deviceType"),
-          providers.gradleProperty("simsteward.${platform.property}.runtime"),
+          extension.of(platform).deviceType,
+          extension.of(platform).runtime,
+          extension.of(platform).profile,
+          extension.slim,
+          extension.maxSimulators,
           xcrun,
         ))
+      }
       }
     }
   }
@@ -51,11 +68,15 @@ private class LeaseAction(
   private val platform: Platform,
   private val deviceType: Provider<String>,
   private val runtime: Provider<String>,
+  private val profile: Provider<String>,
+  private val slim: Provider<Boolean>,
+  private val maxSimulators: Provider<Int>,
   private val xcrun: Provider<String>,
 ) : Action<Task> {
   override fun execute(task: Task) {
     val service = leases.get()
-    service.lease(task.path, name, service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get()))
+    service.lease(task.path, name, service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get())
+      .copy(slim = slim.get(), profile = profile.orNull, maxSimulators = maxSimulators.get()))
   }
 }
 
