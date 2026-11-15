@@ -26,6 +26,10 @@ A SimSlim description of which background services a slim simulator keeps runnin
 Everything that makes two managed simulators interchangeable: platform, device type, runtime, whether it is slim or stock, and the profile.
 _Avoid_: Config, device spec
 
+**Pin**:
+A device type or runtime fixed in configuration for a platform, instead of the default simsteward picks: the newest installed runtime and a device type it supports.
+_Avoid_: Lock, fix, override
+
 ## Sharing
 
 **Pool**:
