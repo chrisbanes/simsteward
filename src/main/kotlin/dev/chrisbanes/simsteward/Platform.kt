@@ -31,6 +31,7 @@ internal fun resolveSpec(
   runtime: String?,
   deviceType: String?,
   xcrun: String,
+  slimming: Slimming,
 ): SimulatorSpec {
   val runtimes = ((JsonSlurper().parseText(runtimesJson) as Map<*, *>)["runtimes"] as List<*>)
     .map { it as Map<*, *> }
@@ -49,5 +50,5 @@ internal fun resolveSpec(
       "Install a ${platform.simctlName} simulator runtime (Xcode > Settings > Components), " +
       "or set simsteward.${platform.property}.runtime and simsteward.${platform.property}.deviceType to installed identifiers.",
   )
-  return SimulatorSpec(deviceType ?: supported(best).first(), best["identifier"] as String, xcrun)
+  return SimulatorSpec(deviceType ?: supported(best).first(), best["identifier"] as String, xcrun, slimming.slim, slimming.simslim, slimming.profile)
 }
