@@ -1,3 +1,4 @@
+import com.diffplug.spotless.LineEnding
 import org.gradle.api.attributes.plugin.GradlePluginApiVersion
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
@@ -8,6 +9,7 @@ plugins {
   id("com.vanniktech.maven.publish") version "0.37.0"
   id("org.jetbrains.dokka") version "2.3.0"
   id("me.tylerbwong.gradle.metalava") version "0.5.1"
+  id("com.diffplug.spotless") version "8.11.0"
 }
 
 java {
@@ -117,4 +119,21 @@ tasks.withType<Test>().configureEach {
 
 tasks.test {
   useJUnitPlatform { excludeTags("smoke") }
+}
+
+spotless {
+  // Workaround for https://github.com/diffplug/spotless/issues/1644
+  lineEndings = LineEnding.PLATFORM_NATIVE
+
+  kotlin {
+    target("src/**/*.kt")
+    ktlint("1.0.1")
+    licenseHeaderFile(file("spotless/copyright.txt"))
+  }
+
+  kotlinGradle {
+    target("*.kts")
+    ktlint("1.0.1")
+    licenseHeaderFile(file("spotless/copyright.txt"), "(^(?![\\/ ]\\**).*$)")
+  }
 }
