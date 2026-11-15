@@ -65,9 +65,19 @@ class FixtureBuild(val root: File) {
         iosSimulatorArm64()
       }
 
+      // Newer KGP reads these swift-import outputs as task inputs; the fixture drops their real producer.
+      val swiftImportStubs = tasks.register("swiftImportStubs") {
+        val dir = layout.buildDirectory.dir("kotlin/swiftImportLdDump/iphonesimulator")
+        outputs.dir(dir)
+        doLast {
+          dir.get().asFile.mkdirs()
+          listOf("framework", "library").forEach { dir.get().file("arm64_${'$'}{it}_search_paths").asFile.writeText("/tmp\n") }
+        }
+      }
+
       // Registered before simsteward so that simsteward's doFirst runs before this one.
       tasks.withType<KotlinNativeSimulatorTest>().configureEach {
-        setDependsOn(emptyList<Any>())
+        setDependsOn(listOf(swiftImportStubs))
         executable(file("test.kexe"))
         val failTest = project.providers.gradleProperty("fixture.failTest").isPresent
         doFirst {
@@ -129,8 +139,8 @@ class FixtureBuild(val root: File) {
   }
 
   companion object {
-    const val GRADLE_VERSION = "8.14"
-    const val KGP_VERSION = "2.2.0"
+    val GRADLE_VERSION: String = System.getProperty("simsteward.test.gradle")
+    val KGP_VERSION: String = System.getProperty("simsteward.test.kgp")
     const val DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17"
     const val RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-27-0"
     const val UDID = "23AE16CF-D297-4A91-A615-5BA5B20D700B"
