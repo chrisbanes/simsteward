@@ -94,6 +94,7 @@ class IosSimulatorTestTaskTest {
       listOf(
         "xcrun simctl create $pool ${FixtureBuild.DEVICE_TYPE} ${FixtureBuild.RUNTIME}",
         "xcrun simctl bootstatus $udid -b",
+        "xcrun simctl list devices -j",
         "xcrun simctl rename $udid $device",
         "test $task",
         "xcrun simctl rename $udid $pool",

@@ -1,10 +1,13 @@
 package dev.chrisbanes.simsteward
 
+import groovy.json.JsonSlurper
 import java.io.ByteArrayOutputStream
 import java.io.Serializable
 import java.util.UUID
 import javax.inject.Inject
 import org.gradle.api.GradleException
+import org.gradle.api.logging.Logger
+import org.gradle.api.logging.Logging
 import org.gradle.api.services.BuildService
 import org.gradle.api.services.BuildServiceParameters
 import org.gradle.process.ExecOperations
@@ -37,32 +40,70 @@ abstract class LeaseService :
 
   private val created = mutableListOf<ManagedSimulator>()
   private val pools = mutableMapOf<SimulatorSpec, MutableList<ManagedSimulator>>()
+  private val creating = mutableMapOf<SimulatorSpec, Int>()
   private val leases = mutableMapOf<String, ManagedSimulator>()
   private val lock = Object()
 
-  /** Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name]. */
-  internal fun lease(taskPath: String, name: String, spec: SimulatorSpec) = synchronized(lock) {
-    val pool = pools.getOrPut(spec) { mutableListOf() }
-    var simulator = pool.firstOrNull { it !in leases.values }
-    while (simulator == null) {
-      if (pool.size < MAX_SIMULATORS_PER_POOL) {
-        // shortcut: creation holds the lock, so other pools wait for it; fine with one pool.
-        simulator = create(spec).also { pool += it }
-      } else {
-        lock.wait()
-        simulator = pool.firstOrNull { it !in leases.values }
+  /**
+   * Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name], growing the pool
+   * up to [maxSimulators] or waiting for a returned lease.
+   */
+  internal fun lease(taskPath: String, name: String, spec: SimulatorSpec, maxSimulators: Int) {
+    val simulator = reserve(taskPath, spec, maxSimulators) ?: create(spec).also { created ->
+      synchronized(lock) {
+        creating.merge(spec, -1, Int::plus)
+        pools.getValue(spec) += created
+        leases[taskPath] = created
       }
     }
+    // The lease is held from here on, so onFinish returns it even if the checks below fail.
+    checkNameIsFree(simulator, name)
     simctl(simulator.xcrun, "rename", simulator.udid, name)
-    leases[taskPath] = simulator
+    logger.lifecycle("simsteward: $taskPath leased managed simulator ${simulator.udid} (${simulator.poolName}) as $name")
+  }
+
+  /** Leases an idle simulator to [taskPath], or returns null once the caller may create one. */
+  private fun reserve(taskPath: String, spec: SimulatorSpec, maxSimulators: Int): ManagedSimulator? = synchronized(lock) {
+    val pool = pools.getOrPut(spec) { mutableListOf() }
+    fun idle() = pool.firstOrNull { it !in leases.values }
+    var waiting = false
+    while (idle() == null && pool.size + creating.getOrDefault(spec, 0) >= maxSimulators) {
+      if (!waiting) {
+        waiting = true
+        val simulators = if (maxSimulators == 1) "simulator" else "simulators"
+        logger.lifecycle("simsteward: $taskPath is waiting for a returned lease: its pool is at its cap of $maxSimulators $simulators")
+      }
+      lock.wait()
+    }
+    idle()?.also { leases[taskPath] = it } ?: run {
+      creating.merge(spec, 1, Int::plus)
+      null
+    }
+  }
+
+  private fun checkNameIsFree(simulator: ManagedSimulator, name: String) {
+    @Suppress("UNCHECKED_CAST")
+    val devices = (JsonSlurper().parseText(simctl(simulator.xcrun, "list", "devices", "-j")) as Map<String, Any?>)["devices"]
+      as Map<String, List<Map<String, Any?>>>
+    val other = devices.values.flatten().firstOrNull { it["name"] == name && it["udid"] != simulator.udid } ?: return
+    throw GradleException(
+      "Another simulator, ${other["udid"]}, is already named $name, so simctl could pick either one. " +
+        "Delete or rename that simulator.",
+    )
   }
 
   override fun onFinish(event: FinishEvent) {
     if (event !is TaskFinishEvent) return
-    synchronized(lock) {
-      val simulator = leases.remove(event.descriptor.taskPath) ?: return
-      lock.notifyAll()
+    val taskPath = event.descriptor.taskPath
+    val simulator = synchronized(lock) { leases[taskPath] } ?: return
+    try {
       simctl(simulator.xcrun, "rename", simulator.udid, simulator.poolName)
+    } finally {
+      // Only now is it idle, so a waiting task cannot rename it before this rename back.
+      synchronized(lock) {
+        leases.remove(taskPath)
+        lock.notifyAll()
+      }
     }
   }
 
@@ -70,18 +111,26 @@ abstract class LeaseService :
     val failures = created.mapNotNull { runCatching { simctl(it.xcrun, "delete", it.udid) }.exceptionOrNull() }
     created.clear()
     pools.clear()
+    creating.clear()
     leases.clear()
     failures.firstOrNull()?.let { first -> throw first.apply { failures.drop(1).forEach(::addSuppressed) } }
   }
 
-  private fun create(spec: SimulatorSpec): ManagedSimulator {
+  /** Runs outside the lock so that pools create simulators concurrently. */
+  private fun create(spec: SimulatorSpec): ManagedSimulator = try {
     val poolName = "$NAME_PREFIX-${UUID.randomUUID().toString().take(8)}"
     val udid = simctl(spec.xcrun, "create", poolName, spec.deviceType, spec.runtime)
     val simulator = ManagedSimulator(udid, poolName, spec.xcrun)
-    created += simulator
+    synchronized(lock) { created += simulator }
     // Stock simulators must be booted: KGP needs a booted device when standalone is false.
     simctl(spec.xcrun, "bootstatus", udid, "-b")
-    return simulator
+    simulator
+  } catch (failure: Throwable) {
+    synchronized(lock) {
+      creating.merge(spec, -1, Int::plus)
+      lock.notifyAll()
+    }
+    throw failure
   }
 
   private fun simctl(xcrun: String, vararg arguments: String): String = run(listOf(xcrun, "simctl", *arguments))
@@ -103,8 +152,7 @@ abstract class LeaseService :
   }
 
   private companion object {
-    // shortcut: one simulator per pool until the cap becomes configurable.
-    const val MAX_SIMULATORS_PER_POOL = 1
     const val STDERR_TAIL_LINES = 20
+    val logger: Logger = Logging.getLogger(LeaseService::class.java)
   }
 }

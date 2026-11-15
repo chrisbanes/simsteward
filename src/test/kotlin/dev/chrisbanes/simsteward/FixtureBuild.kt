@@ -17,6 +17,7 @@ import org.gradle.testkit.runner.GradleRunner
 class FixtureBuild(val root: File) {
   val commandLog: File = root.resolve("commands.log")
   private val failFile = root.resolve("fail-on")
+  private val devicesFile = root.resolve("devices.json")
 
   init {
     root.mkdirs()
@@ -42,16 +43,30 @@ class FixtureBuild(val root: File) {
       """
       org.gradle.configuration-cache=true
       org.gradle.configuration-cache.problems=fail
-      simsteward.xcrun=${fake("xcrun", XCRUN)}
+      simsteward.xcrun=${fake("xcrun", xcrun())}
       simsteward.simslim=${fake("simslim", SIMSLIM)}
       simsteward.ios.deviceType=$DEVICE_TYPE
       simsteward.ios.runtime=$RUNTIME
       """.trimIndent(),
     )
-    root.resolve("lib").mkdirs()
+    writeModule("lib")
+  }
+
+  /** Adds another KMP module, [name], with the same fixture test task as `lib`. */
+  fun addModule(name: String) {
+    root.resolve("settings.gradle.kts").appendText("\ninclude(\":$name\")\n")
+    writeModule(name)
+  }
+
+  /** Plants a simulator that simsteward did not create, as `simctl list devices -j` reports it. */
+  fun addOtherSimulator(name: String, udid: String) =
+    devicesFile.writeText("""{"devices":{"$RUNTIME":[{"name":"$name","udid":"$udid","state":"Shutdown"}]}}""")
+
+  private fun writeModule(name: String) {
+    val module = root.resolve(name).apply { mkdirs() }
     // The fake test binary lets KGP's test task run without compiling Kotlin/Native.
-    root.resolve("lib/test.kexe").writeText("")
-    root.resolve("lib/build.gradle.kts").writeText(
+    module.resolve("test.kexe").writeText("")
+    module.resolve("build.gradle.kts").writeText(
       """
       import java.io.File
       import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
@@ -70,9 +85,29 @@ class FixtureBuild(val root: File) {
         setDependsOn(emptyList<Any>())
         executable(file("test.kexe"))
         val failTest = project.providers.gradleProperty("fixture.failTest").isPresent
+        // Barrier: the first `fixture.holders` tasks to lease keep their lease until that many tasks
+        // hold one and, with `fixture.awaitWaiter`, until another lease request is waiting.
+        val holders = project.providers.gradleProperty("fixture.holders").orNull?.toInt() ?: 0
+        val awaitWaiter = project.providers.gradleProperty("fixture.awaitWaiter").isPresent
+        val arrivals = File("${root.resolve("arrivals").absolutePath}")
         doFirst {
           println("fixture: ${'$'}path device=${'$'}{device.get()} standalone=${'$'}{standalone.get()}")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
+          if (holders > 0) {
+            arrivals.mkdirs()
+            var ordinal = 1
+            while (!File(arrivals, ordinal.toString()).mkdir()) ordinal++
+            // A lease request is waiting when a thread blocks inside simsteward's code.
+            fun leaseIsWaiting() = Thread.getAllStackTraces().any { (thread, frames) ->
+              thread.state == Thread.State.WAITING && frames.any { it.className.startsWith("dev.chrisbanes.simsteward.") }
+            }
+            fun ready() = arrivals.list()!!.size >= holders && (!awaitWaiter || leaseIsWaiting())
+            val deadline = System.nanoTime() + 60_000_000_000L
+            while (ordinal <= holders && !ready()) {
+              check(System.nanoTime() < deadline) { "fixture barrier timed out in ${'$'}path" }
+              Thread.sleep(10)
+            }
+          }
           if (failTest) throw GradleException("fixture test failure")
           throw StopExecutionException()
         }
@@ -84,8 +119,11 @@ class FixtureBuild(val root: File) {
   }
 
   /** Appends Kotlin DSL to the `lib` module's build script. */
-  fun appendToLib(script: String) {
-    root.resolve("lib/build.gradle.kts").appendText("\n" + script.trimIndent() + "\n")
+  fun appendToLib(script: String) = appendTo("lib", script)
+
+  /** Appends Kotlin DSL to [module]'s build script. */
+  fun appendTo(module: String, script: String) {
+    root.resolve("$module/build.gradle.kts").appendText("\n" + script.trimIndent() + "\n")
   }
 
   /** Makes the fakes fail every command that starts with [command], such as `simctl create`. */
@@ -104,6 +142,22 @@ class FixtureBuild(val root: File) {
   fun build(vararg arguments: String): BuildResult = runner(*arguments).build()
 
   fun buildAndFail(vararg arguments: String): BuildResult = runner(*arguments).buildAndFail()
+
+  // Each create gets its own UDID, the first one being [UDID]; mkdir claims a number atomically.
+  private fun xcrun(): String {
+    val udids = root.resolve("udids").absolutePath
+    return """
+      case "${'$'}1 ${'$'}2" in
+        "simctl create")
+          mkdir -p '$udids'
+          n=1
+          while ! mkdir "$udids/${'$'}n" 2>/dev/null; do n=${'$'}((n + 1)); done
+          if [ "${'$'}n" = 1 ]; then echo "$UDID"; else echo "$UDID-${'$'}n"; fi
+          ;;
+        "simctl list") cat '${devicesFile.absolutePath}' 2>/dev/null || echo '{"devices":{}}' ;;
+      esac
+    """
+  }
 
   private fun fake(name: String, body: String): String {
     val bin = root.resolve("bin").apply { mkdirs() }
@@ -137,12 +191,6 @@ class FixtureBuild(val root: File) {
 
     private val TEST_REPOSITORY = System.getProperty("simsteward.testRepository")
     private val SIMSTEWARD_VERSION = System.getProperty("simsteward.version")
-
-    private val XCRUN = """
-      case "${'$'}1 ${'$'}2" in
-        "simctl create") echo "$UDID" ;;
-      esac
-    """
 
     private const val SIMSLIM = ""
   }

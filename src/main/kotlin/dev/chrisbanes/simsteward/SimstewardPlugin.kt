@@ -26,6 +26,8 @@ abstract class SimstewardPlugin @Inject constructor(
       val deviceType = providers.gradleProperty("simsteward.ios.deviceType")
       val runtime = providers.gradleProperty("simsteward.ios.runtime")
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
+      // shortcut: property only; #8 adds the extension's maxSimulators, which overrides it.
+      val maxSimulators = providers.gradleProperty("simsteward.maxSimulators").orElse("2")
 
       val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets
       tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
@@ -36,7 +38,7 @@ abstract class SimstewardPlugin @Inject constructor(
         task.standalone.set(false)
         task.device.set(name)
         task.usesService(leases)
-        task.doFirst(LeaseAction(leases, name, deviceType, runtime, xcrun))
+        task.doFirst(LeaseAction(leases, name, deviceType, runtime, xcrun, maxSimulators))
       }
     }
   }
@@ -49,6 +51,7 @@ private class LeaseAction(
   private val deviceType: Provider<String>,
   private val runtime: Provider<String>,
   private val xcrun: Provider<String>,
+  private val maxSimulators: Provider<String>,
 ) : Action<Task> {
   override fun execute(task: Task) {
     val spec = SimulatorSpec(
@@ -56,7 +59,11 @@ private class LeaseAction(
       runtime = runtime.orNull ?: throw missingProperty("simsteward.ios.runtime", "runtime"),
       xcrun = xcrun.get(),
     )
-    leases.get().lease(task.path, name, spec)
+    val max = maxSimulators.get().let { value ->
+      value.toIntOrNull()?.takeIf { it >= 1 }
+        ?: throw GradleException("simsteward.maxSimulators must be a whole number of at least 1, but was '$value'.")
+    }
+    leases.get().lease(task.path, name, spec, max)
   }
 
   private fun missingProperty(property: String, what: String) =
