@@ -56,6 +56,26 @@ class SettingsTest {
   }
 
   @Test
+  fun relativeProfilesResolveAgainstTheirOwnProjectAndPropertyAgainstTheBuildRoot() {
+    val build = FixtureBuild(directory)
+    build.addModule("lib2")
+    build.addModule("lib3")
+    val libProfile = directory.resolve("lib/profile.json").apply { writeText("{\"lib\": true}") }
+    val lib2Profile = directory.resolve("lib2/profile.json").apply { writeText("{\"lib2\": true}") }
+    val rootProfile = directory.resolve("root.json").apply { writeText("{}") }
+    build.simsteward("lib", "ios { profile.set(\"profile.json\") }")
+    build.simsteward("lib2", "ios { profile.set(\"profile.json\") }")
+
+    build.build(lib, lib2, ":lib3:iosSimulatorArm64Test", "-Psimsteward.ios.profile=root.json", "--max-workers=1")
+
+    val ons = build.commands().filter { it.startsWith("simslim on ") }
+    assertEquals(3, ons.size, ons.toString())
+    listOf(libProfile, lib2Profile, rootProfile).forEach { profile ->
+      assertTrue(ons.any { it.endsWith("--profile ${profile.canonicalPath}") || it.endsWith("--profile ${profile.absolutePath}") }, "$profile not in $ons")
+    }
+  }
+
+  @Test
   fun projectWithSimstewardDisabledKeepsKgpDefaultsAndCreatesNoSimulator() {
     val build = FixtureBuild(directory)
     build.simsteward("lib", "enabled.set(false)")

@@ -1,5 +1,6 @@
 package dev.chrisbanes.simsteward
 
+import java.io.File
 import java.security.MessageDigest
 import java.util.HexFormat
 import javax.inject.Inject
@@ -44,8 +45,10 @@ abstract class SimstewardPlugin @Inject constructor(
       extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map(::parseMaxSimulators).orElse(2))
       Platform.entries.forEach { platform ->
         val settings = extension.of(platform)
-        listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime, "profile" to settings.profile)
+        listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime)
           .forEach { (name, property) -> property.convention(providers.gradleProperty("simsteward.${platform.property}.$name")) }
+        // A build-wide property is relative to the build root; a project's own value, to that project.
+        settings.profile.convention(providers.gradleProperty("simsteward.${platform.property}.profile").map { File(buildRoot).resolve(it).path })
       }
 
       val recordsDir = gradle.gradleUserHomeDir.resolve("simsteward/records")
@@ -90,6 +93,7 @@ abstract class SimstewardPlugin @Inject constructor(
             extension,
             xcrun,
             simslim,
+            projectDir,
             Ownership(recordsDir, buildRoot),
           ))
           task.doLast(ReleaseAction(leases))
@@ -121,6 +125,7 @@ private class LeaseAction(
   private val extension: SimstewardExtension,
   private val xcrun: Provider<String>,
   private val simslim: Provider<String>,
+  private val projectDir: File,
   private val ownership: Ownership,
 ) : Action<Task> {
   override fun execute(task: Task) {
@@ -129,7 +134,7 @@ private class LeaseAction(
     val platform = Platform.of(family) ?: return
     val service = leases.get()
     val settings = extension.of(platform)
-    val slimming = Slimming(extension.slim.get(), simslim.get(), settings.profile.orNull)
+    val slimming = Slimming(extension.slim.get(), simslim.get(), settings.profile.orNull?.let { projectDir.resolve(it).absolutePath })
     service.lease(
       task.path,
       name,

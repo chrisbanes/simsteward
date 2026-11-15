@@ -44,6 +44,6 @@ interface PlatformSettings {
   /** Simulator runtime identifier; unset picks the newest installed. */
   val runtime: Property<String>
 
-  /** Slimming profile. */
+  /** Slimming profile path; a relative path resolves against this project, or the build root when set by property. */
   val profile: Property<String>
 }
