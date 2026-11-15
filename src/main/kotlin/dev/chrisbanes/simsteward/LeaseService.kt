@@ -3,11 +3,8 @@ package dev.chrisbanes.simsteward
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.Serializable
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption.ATOMIC_MOVE
-import java.nio.file.StandardCopyOption.REPLACE_EXISTING
-import java.util.Properties
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import org.gradle.api.GradleException
 import org.gradle.api.logging.Logging
@@ -46,9 +43,12 @@ abstract class LeaseService :
   @get:Inject
   internal abstract val exec: ExecOperations
 
+  private data class SpecKey(val platform: Platform, val runtime: String?, val deviceType: String?, val xcrun: String)
+
   private class ManagedSimulator(val udid: String, val poolName: String, val xcrun: String, val record: File)
 
   private var reaped = false
+  private val specs = ConcurrentHashMap<SpecKey, SimulatorSpec>()
 
   private val created = mutableListOf<ManagedSimulator>()
   private val pools = mutableMapOf<SimulatorSpec, MutableList<ManagedSimulator>>()
@@ -59,11 +59,10 @@ abstract class LeaseService :
 
   /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */
   internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String, slimming: Slimming): SimulatorSpec =
-    if (runtime != null && deviceType != null) {
-      SimulatorSpec(deviceType, runtime, xcrun, slimming)
-    } else {
-      resolveSpec(platform, simctl(xcrun, "list", "-j", "runtimes"), runtime, deviceType, xcrun, slimming)
-    }
+    // Slimming is not part of the key, so projects that differ only in it still share one `simctl list`.
+    specs.computeIfAbsent(SpecKey(platform, runtime, deviceType, xcrun)) {
+      resolveSpec(platform, { simctl(xcrun, "list", "-j", "runtimes") }, runtime, deviceType, xcrun, slimming)
+    }.copy(slimming = slimming)
 
   /**
    * Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name], growing the pool
@@ -110,11 +109,9 @@ abstract class LeaseService :
 
   /** `simctl` silently picks one of several same-named simulators (ADR 0001). */
   private fun checkNameIsFree(simulator: ManagedSimulator, name: String) {
-    val other = simctl(simulator.xcrun, "list", "devices").lines()
-      .mapNotNull { DEVICE_LINE.matchEntire(it)?.destructured }
-      .firstOrNull { (n, udid) -> n == name && udid != simulator.udid } ?: return
+    val (_, otherUdid) = listDevices(simulator.xcrun).firstOrNull { (n, udid) -> n == name && udid != simulator.udid } ?: return
     throw GradleException(
-      "Another simulator, ${other.component2()}, is already named $name, so simctl could pick either one. " +
+      "Another simulator, $otherUdid, is already named $name, so simctl could pick either one. " +
         "Delete or rename that simulator.",
     )
   }
@@ -163,15 +160,16 @@ abstract class LeaseService :
     // The record is written first so that an interruption inside `create` leaves a trace by name.
     val record = ownership.recordsDir.resolve("$poolName.properties")
     val owner = ProcessHandle.current()
-    writeRecord(record, mapOf(
+    val values = mapOf(
       "name" to poolName,
       "buildRoot" to ownership.buildRoot,
       "pid" to owner.pid().toString(),
       "startTime" to owner.info().startInstant().get().toEpochMilli().toString(),
-    ))
+    )
+    writeRecord(record, values)
     // A failed create leaves the record behind: it may still have made the simulator.
     val udid = simctl(spec.xcrun, "create", poolName, spec.deviceType, spec.runtime)
-    writeRecord(record, readRecord(record) + ("udid" to udid))
+    writeRecord(record, values + ("udid" to udid))
     val simulator = ManagedSimulator(udid, poolName, spec.xcrun, record)
     synchronized(lock) { created += simulator }
     val slimming = spec.slimming
@@ -199,57 +197,40 @@ abstract class LeaseService :
    * never known, selects a simulator to delete.
    */
   internal fun reap(xcrun: String, recordsDir: File) = synchronized(lock) {
-    val devices = simctl(xcrun, "list", "devices").lines().mapNotNull { DEVICE_LINE.matchEntire(it)?.destructured }
-      .map { (name, udid) -> name to udid }
+    val devices = listDevices(xcrun)
     val records = recordsDir.listFiles { f -> f.extension == "properties" }.orEmpty().mapNotNull { file ->
       val record = readRecord(file)
-      val name = record["name"]
-      val pid = record["pid"]?.toLongOrNull()
-      val start = record["startTime"]?.toLongOrNull()
-      if (name == null || pid == null || start == null) {
+      if (record["name"] == null || record["pid"]?.toLongOrNull() == null || record["startTime"]?.toLongOrNull() == null) {
         logger.warn("Ignoring unreadable simsteward record $file")
         null
       } else {
-        Triple(file, record, ownerIsAlive(pid, start))
+        file to record
       }
     }
-    records.filter { !it.third }.forEach { (file, record, _) ->
-      val udid = record["udid"]
-      val targets = devices.filter { (name, id) -> if (udid != null) id == udid else name == record["name"] }
-      val failed = targets.any { (name, id) ->
-        runCatching { simctl(xcrun, "delete", id) }.onFailure { logger.warn("Could not reap simulator $name ($id): ${it.message}") }.isFailure
+    records.filterNot { (_, record) -> ownerIsAlive(record.getValue("pid").toLong(), record.getValue("startTime").toLong()) }
+      .forEach { (file, record) ->
+        val udid = record["udid"]
+        val targets = devices.filter { (name, id) -> if (udid != null) id == udid else name == record["name"] }
+        val failed = targets.any { (name, id) ->
+          runCatching { simctl(xcrun, "delete", id) }.onFailure { logger.warn("Could not reap simulator $name ($id): ${it.message}") }.isFailure
+        }
+        if (!failed) file.delete()
       }
-      if (!failed) file.delete()
-    }
     val recordedNames = records.mapNotNull { it.second["name"] }.toSet()
     val recordedUdids = records.mapNotNull { it.second["udid"] }.toSet()
     devices.filter { (name, id) -> name.startsWith("$NAME_PREFIX-") && name !in recordedNames && id !in recordedUdids }
       .forEach { (name, id) -> logger.warn("Found simulator $name ($id) with the simsteward prefix but no ownership record; leaving it alone.") }
   }
 
+  /** The `name to udid` of every simulator `simctl list devices` reports. */
+  private fun listDevices(xcrun: String): List<Pair<String, String>> =
+    simctl(xcrun, "list", "devices").lines().mapNotNull { DEVICE_LINE.matchEntire(it)?.destructured?.let { (name, udid) -> name to udid } }
+
   private fun ownerIsAlive(pid: Long, startTime: Long): Boolean = ProcessHandle.of(pid).map { handle ->
     // shortcut: an owner whose start time is unknown counts as alive, so its simulators leak until a later
     // build sees the PID gone; compare another process attribute if that leaks in practice.
     handle.info().startInstant().map { it.toEpochMilli() == startTime }.orElse(true)
   }.orElse(false)
-
-  /** Replaces [file] atomically, so a reaper never reads a half-written record. */
-  private fun writeRecord(file: File, values: Map<String, String>) {
-    file.parentFile.mkdirs()
-    val properties = Properties().apply { values.forEach { (k, v) -> setProperty(k, v) } }
-    // The `.tmp` suffix keeps it out of the reaper's `*.properties` listing.
-    val temp = Files.createTempFile(file.parentFile.toPath(), file.name, ".tmp")
-    try {
-      Files.newBufferedWriter(temp).use { properties.store(it, null) }
-      Files.move(temp, file.toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
-    } finally {
-      Files.deleteIfExists(temp)
-    }
-  }
-
-  private fun readRecord(file: File): Map<String, String> = runCatching {
-    Properties().apply { file.reader().use(::load) }.let { p -> p.stringPropertyNames().associateWith { p.getProperty(it) } }
-  }.getOrDefault(emptyMap())
 
   private fun simctl(xcrun: String, vararg arguments: String): String = run(listOf(xcrun, "simctl", *arguments))
 

@@ -23,17 +23,18 @@ internal enum class Platform(val simctlName: String, val productFamily: String, 
 
 /**
  * Picks the newest installed runtime of [platform] and a device type it supports from the JSON of
- * `simctl list -j runtimes`. A pinned [runtime] or [deviceType] overrides the pick.
+ * `simctl list -j runtimes`, read only when something is unpinned. A pinned [runtime] or [deviceType] overrides the pick.
  */
 internal fun resolveSpec(
   platform: Platform,
-  runtimesJson: String,
+  runtimesJson: () -> String,
   runtime: String?,
   deviceType: String?,
   xcrun: String,
   slimming: Slimming,
 ): SimulatorSpec {
-  val runtimes = ((JsonSlurper().parseText(runtimesJson) as Map<*, *>)["runtimes"] as List<*>)
+  if (runtime != null && deviceType != null) return SimulatorSpec(deviceType, runtime, xcrun, slimming)
+  val runtimes = ((JsonSlurper().parseText(runtimesJson()) as Map<*, *>)["runtimes"] as List<*>)
     .map { it as Map<*, *> }
     .filter { it["platform"] == platform.simctlName && it["isAvailable"] == true }
     .filter { runtime == null || it["identifier"] == runtime }
