@@ -61,6 +61,51 @@ class IosSimulatorTestTaskTest {
   }
 
   @Test
+  fun changingThePinnedRuntimeOrDeviceTypeReRunsTheTask() {
+    val build = FixtureBuild(directory)
+    build.build(task)
+
+    val runtime = build.build(task, "-Psimsteward.ios.runtime=${FixtureBuild.RUNTIME}-other")
+    val deviceType = build.build(task, "-Psimsteward.ios.deviceType=${FixtureBuild.DEVICE_TYPE}-other")
+
+    assertEquals(TaskOutcome.SUCCESS, runtime.task(task)?.outcome)
+    assertEquals(TaskOutcome.SUCCESS, deviceType.task(task)?.outcome)
+  }
+
+  @Test
+  fun changingSlimmingReRunsTheTask() {
+    val build = FixtureBuild(directory)
+    build.build(task)
+
+    assertEquals(TaskOutcome.SUCCESS, build.build(task, STOCK).task(task)?.outcome)
+  }
+
+  @Test
+  fun editingTheProfileContentsReRunsTheTaskButAnUnchangedProfileDoesNot() {
+    val build = FixtureBuild(directory)
+    val profile = directory.resolve("profile.json").apply { writeText("{}") }
+    val profileArg = "-Psimsteward.ios.profile=${profile.absolutePath}"
+    build.build(task, profileArg)
+    assertEquals(TaskOutcome.UP_TO_DATE, build.build(task, profileArg).task(task)?.outcome)
+
+    profile.writeText("{\"edited\": true}")
+
+    assertEquals(TaskOutcome.SUCCESS, build.build(task, profileArg).task(task)?.outcome)
+  }
+
+  @Test
+  fun unpinnedSettingsAreNotResolvedThroughSimctlWhenFingerprinting() {
+    val build = FixtureBuild(directory, pinned = false)
+    build.build(task)
+    build.clearCommands()
+
+    val result = build.build(task)
+
+    assertEquals(TaskOutcome.UP_TO_DATE, result.task(task)?.outcome)
+    assertEquals(emptyList(), build.commands())
+  }
+
+  @Test
   fun taskSkippedByOnlyIfCreatesNoSimulator() {
     val build = FixtureBuild(directory)
     build.appendToLib("tasks.named(\"iosSimulatorArm64Test\") { onlyIf { false } }")

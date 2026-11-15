@@ -14,6 +14,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.testing.TestDescriptor
 import org.gradle.api.tasks.testing.TestListener
@@ -69,6 +70,19 @@ abstract class SimstewardPlugin @Inject constructor(
           task.standalone.set(false)
           task.device.set(name)
           task.usesService(leases)
+          // Inputs reflect only what is pinned; unpinned defaults are resolved through simctl at execution, never here.
+          // targetName is null now, so each lookup waits until Gradle reads the input.
+          fun pinned(pick: (PlatformSettings) -> Provider<String>): Provider<String> = providers.provider {
+            families.get()[task.targetName]?.let(Platform::of)?.let { pick(extension.of(it)).orNull }
+          }
+          task.inputs.property("simsteward.deviceType", pinned { it.deviceType }).optional(true)
+          task.inputs.property("simsteward.runtime", pinned { it.runtime }).optional(true)
+          task.inputs.property("simsteward.slim", extension.slim)
+          // Content only, so moving the profile does not rerun the task.
+          task.inputs.files(pinned { it.profile }.map { file(it) })
+            .withPropertyName("simsteward.profile")
+            .withPathSensitivity(PathSensitivity.NONE)
+            .optional()
           task.doFirst(LeaseAction(
             leases,
             name,
