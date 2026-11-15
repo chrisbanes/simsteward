@@ -22,6 +22,7 @@ abstract class SimstewardPlugin @Inject constructor(
 
       val buildRootHash = sha256(layout.settingsDirectory.asFile.absolutePath).take(8)
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
+      val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
 
       val extension = extensions.create("simsteward", SimstewardExtension::class.java)
       extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
@@ -54,6 +55,7 @@ abstract class SimstewardPlugin @Inject constructor(
           extension.slim,
           extension.maxSimulators,
           xcrun,
+          simslim,
         ))
       }
       }
@@ -72,11 +74,16 @@ private class LeaseAction(
   private val slim: Provider<Boolean>,
   private val maxSimulators: Provider<Int>,
   private val xcrun: Provider<String>,
+  private val simslim: Provider<String>,
 ) : Action<Task> {
   override fun execute(task: Task) {
     val service = leases.get()
-    service.lease(task.path, name, service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get())
-      .copy(slim = slim.get(), profile = profile.orNull, maxSimulators = maxSimulators.get()))
+    val slimming = Slimming(slim.get(), simslim.get(), profile.orNull)
+    service.lease(
+      task.path,
+      name,
+      service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get(), slimming).copy(maxSimulators = maxSimulators.get()),
+    )
   }
 }
 
