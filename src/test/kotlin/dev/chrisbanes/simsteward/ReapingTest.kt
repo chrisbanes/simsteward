@@ -22,7 +22,8 @@ class ReapingTest {
   @Test
   fun recordExistsWhileBuildOwnsSimulatorAndIsRemovedAfterDeletion() {
     val build = FixtureBuild(directory)
-    build.build(task)
+    // Stock, so the fake xcrun's bootstatus runs and snapshots the record after create.
+    build.build(task, "-Psimsteward.slim=false")
 
     val pool = build.root.resolve("pool-name").readText().trim()
     val atCreate = properties(build.root.resolve("record-at-create.properties"))

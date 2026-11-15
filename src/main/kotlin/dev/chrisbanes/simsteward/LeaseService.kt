@@ -20,10 +20,16 @@ internal data class SimulatorSpec(
   val deviceType: String,
   val runtime: String,
   val xcrun: String,
+  val slim: Boolean,
+  val simslim: String,
+  val profile: String?,
 ) : Serializable
 
 /** Where this build's ownership records live (under the Gradle user home) and which build owns them. */
 internal data class Ownership(val recordsDir: File, val buildRoot: String) : Serializable
+
+/** The slimming half of a [SimulatorSpec]. */
+internal data class Slimming(val slim: Boolean, val simslim: String, val profile: String?) : Serializable
 
 /**
  * Holds every pool of managed simulators in the build.
@@ -49,11 +55,11 @@ abstract class LeaseService :
   private val lock = Object()
 
   /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */
-  internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String): SimulatorSpec =
+  internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String, slimming: Slimming): SimulatorSpec =
     if (runtime != null && deviceType != null) {
-      SimulatorSpec(deviceType, runtime, xcrun)
+      SimulatorSpec(deviceType, runtime, xcrun, slimming.slim, slimming.simslim, slimming.profile)
     } else {
-      resolveSpec(platform, simctl(xcrun, "list", "-j", "runtimes"), runtime, deviceType, xcrun)
+      resolveSpec(platform, simctl(xcrun, "list", "-j", "runtimes"), runtime, deviceType, xcrun, slimming)
     }
 
   /** Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name]. */
@@ -116,8 +122,15 @@ abstract class LeaseService :
     writeRecord(record, readRecord(record) + ("udid" to udid))
     val simulator = ManagedSimulator(udid, poolName, spec.xcrun, record)
     created += simulator
-    // Stock simulators must be booted: KGP needs a booted device when standalone is false.
-    simctl(spec.xcrun, "bootstatus", udid, "-b")
+    if (spec.slim) {
+      // `simslim on` leaves the simulator booted; there is no fallback to stock if it fails.
+      val profile = listOfNotNull(spec.profile?.let { "--profile" }, spec.profile)
+      run(listOf(spec.simslim, "on", udid) + profile)
+      run(listOf(spec.simslim, "verify", udid) + profile)
+    } else {
+      // Stock simulators must be booted: KGP needs a booted device when standalone is false.
+      simctl(spec.xcrun, "bootstatus", udid, "-b")
+    }
     return simulator
   }
 

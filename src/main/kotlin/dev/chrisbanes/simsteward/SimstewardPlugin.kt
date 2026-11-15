@@ -29,6 +29,8 @@ abstract class SimstewardPlugin @Inject constructor(
 
       val buildRootHash = sha256(layout.settingsDirectory.asFile.absolutePath).take(8)
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
+      val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
+      val slim = providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(true)
 
       val recordsDir = gradle.gradleUserHomeDir.resolve("simsteward/records")
       val buildRoot = layout.settingsDirectory.asFile.absolutePath
@@ -56,6 +58,9 @@ abstract class SimstewardPlugin @Inject constructor(
           providers.gradleProperty("simsteward.${platform.property}.deviceType"),
           providers.gradleProperty("simsteward.${platform.property}.runtime"),
           xcrun,
+          simslim,
+          slim,
+          providers.gradleProperty("simsteward.${platform.property}.profile"),
           Ownership(recordsDir, buildRoot),
         ))
       }
@@ -81,11 +86,15 @@ private class LeaseAction(
   private val deviceType: Provider<String>,
   private val runtime: Provider<String>,
   private val xcrun: Provider<String>,
+  private val simslim: Provider<String>,
+  private val slim: Provider<Boolean>,
+  private val profile: Provider<String>,
   private val ownership: Ownership,
 ) : Action<Task> {
   override fun execute(task: Task) {
     val service = leases.get()
-    service.lease(task.path, name, service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get()), ownership)
+    val slimming = Slimming(slim.get(), simslim.get(), profile.orNull)
+    service.lease(task.path, name, service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get(), slimming), ownership)
   }
 }
 
