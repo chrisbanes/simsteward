@@ -1,3 +1,6 @@
+// Copyright 2026, Christopher Banes and the Simsteward project contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package dev.chrisbanes.simsteward
 
 import java.io.File
@@ -86,16 +89,18 @@ abstract class SimstewardPlugin @Inject constructor(
             .withPropertyName("simsteward.profile")
             .withPathSensitivity(PathSensitivity.NONE)
             .optional()
-          task.doFirst(LeaseAction(
-            leases,
-            name,
-            families,
-            extension,
-            xcrun,
-            simslim,
-            projectDir,
-            Ownership(recordsDir, buildRoot),
-          ))
+          task.doFirst(
+            LeaseAction(
+              leases,
+              name,
+              families,
+              extension,
+              xcrun,
+              simslim,
+              projectDir,
+              Ownership(recordsDir, buildRoot),
+            ),
+          )
           task.doLast(ReleaseAction(leases))
         }
       }
@@ -106,7 +111,9 @@ abstract class SimstewardPlugin @Inject constructor(
 /** The manual counterpart of the reaping that runs before a build's first lease. */
 internal abstract class ReapTask : DefaultTask() {
   @get:Internal abstract val service: Property<LeaseService>
+
   @get:Input abstract val xcrun: Property<String>
+
   @get:Internal abstract val recordsDir: DirectoryProperty
 
   @TaskAction

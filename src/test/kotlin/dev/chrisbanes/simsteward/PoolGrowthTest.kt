@@ -1,3 +1,6 @@
+// Copyright 2026, Christopher Banes and the Simsteward project contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package dev.chrisbanes.simsteward
 
 import java.io.File
@@ -37,7 +40,10 @@ class PoolGrowthTest {
     build.addModule("third")
 
     val result = build.build(
-      *tasks("lib", "second", "third"), *parallel, "-Pfixture.holders=2", "-Pfixture.awaitWaiter",
+      *tasks("lib", "second", "third"),
+      *parallel,
+      "-Pfixture.holders=2",
+      "-Pfixture.awaitWaiter",
     )
 
     assertEquals(2, build.creates().size, build.commands().toString())
@@ -91,7 +97,11 @@ class PoolGrowthTest {
     build.addModule("second")
 
     val result = build.build(
-      *tasks("lib", "second"), *parallel, "-Psimsteward.maxSimulators=1", "-Pfixture.holders=1", "-Pfixture.awaitWaiter",
+      *tasks("lib", "second"),
+      *parallel,
+      "-Psimsteward.maxSimulators=1",
+      "-Pfixture.holders=1",
+      "-Pfixture.awaitWaiter",
     )
 
     assertEquals(1, build.creates().size, build.commands().toString())
@@ -148,8 +158,13 @@ class PoolGrowthTest {
     build.addModule("second")
 
     val result = build.buildAndFail(
-      *tasks("lib", "second"), *parallel, "--continue",
-      "-Psimsteward.maxSimulators=1", "-Pfixture.holders=1", "-Pfixture.awaitWaiter", "-Pfixture.failTest",
+      *tasks("lib", "second"),
+      *parallel,
+      "--continue",
+      "-Psimsteward.maxSimulators=1",
+      "-Pfixture.holders=1",
+      "-Pfixture.awaitWaiter",
+      "-Pfixture.failTest",
     )
 
     val udid = FixtureBuild.UDID

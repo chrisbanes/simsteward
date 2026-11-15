@@ -1,3 +1,7 @@
+// Copyright 2026, Christopher Banes and the Simsteward project contributors
+// SPDX-License-Identifier: Apache-2.0
+
+
 import com.diffplug.spotless.LineEnding
 import org.gradle.api.attributes.plugin.GradlePluginApiVersion
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget

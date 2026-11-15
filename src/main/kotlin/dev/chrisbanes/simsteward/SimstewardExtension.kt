@@ -1,3 +1,6 @@
+// Copyright 2026, Christopher Banes and the Simsteward project contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package dev.chrisbanes.simsteward
 
 import org.gradle.api.Action
@@ -22,7 +25,9 @@ abstract class SimstewardExtension {
   abstract val maxSimulators: Property<Int>
 
   @get:Nested abstract val ios: PlatformSettings
+
   @get:Nested abstract val tvos: PlatformSettings
+
   @get:Nested abstract val watchos: PlatformSettings
 
   fun ios(action: Action<PlatformSettings>) = action.execute(ios)
