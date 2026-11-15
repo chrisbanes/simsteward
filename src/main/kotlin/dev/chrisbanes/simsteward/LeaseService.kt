@@ -40,6 +40,14 @@ abstract class LeaseService :
   private val leases = mutableMapOf<String, ManagedSimulator>()
   private val lock = Object()
 
+  /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */
+  internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String): SimulatorSpec =
+    if (runtime != null && deviceType != null) {
+      SimulatorSpec(deviceType, runtime, xcrun)
+    } else {
+      resolveSpec(platform, simctl(xcrun, "list", "-j", "runtimes"), runtime, deviceType, xcrun)
+    }
+
   /** Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name]. */
   internal fun lease(taskPath: String, name: String, spec: SimulatorSpec) = synchronized(lock) {
     val pool = pools.getOrPut(spec) { mutableListOf() }
