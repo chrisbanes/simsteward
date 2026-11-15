@@ -90,10 +90,30 @@ class FixtureBuild(
         setDependsOn(listOf(swiftImportStubs))
         executable(file("test.kexe"))
         val failTest = project.providers.gradleProperty("fixture.failTest").isPresent
+        // Barrier: the first `fixture.holders` tasks to lease keep their lease until that many tasks
+        // hold one and, with `fixture.awaitWaiter`, until another lease request is waiting.
+        val holders = project.providers.gradleProperty("fixture.holders").orNull?.toInt() ?: 0
+        val awaitWaiter = project.providers.gradleProperty("fixture.awaitWaiter").isPresent
+        val arrivals = File("${root.resolve("arrivals").absolutePath}")
         doFirst {
           val deviceName = runCatching { device.get() }.getOrNull()
           println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
+          if (holders > 0) {
+            arrivals.mkdirs()
+            var ordinal = 1
+            while (!File(arrivals, ordinal.toString()).mkdir()) ordinal++
+            // A lease request is waiting when a thread blocks inside simsteward's code.
+            fun leaseIsWaiting() = Thread.getAllStackTraces().any { (thread, frames) ->
+              thread.state == Thread.State.WAITING && frames.any { it.className.startsWith("dev.chrisbanes.simsteward.") }
+            }
+            fun ready() = arrivals.list()!!.size >= holders && (!awaitWaiter || leaseIsWaiting())
+            val deadline = System.nanoTime() + 60_000_000_000L
+            while (ordinal <= holders && !ready()) {
+              check(System.nanoTime() < deadline) { "fixture barrier timed out in ${'$'}path" }
+              Thread.sleep(10)
+            }
+          }
           if (failTest) throw GradleException("fixture test failure")
           throw StopExecutionException()
         }
@@ -191,7 +211,11 @@ class FixtureBuild(
         "simctl create")
           echo "${'$'}3" > '${root.resolve("pool-name").absolutePath}'
           cp '$RECORDS_DIR'/"${'$'}3.properties" '${root.resolve("record-at-create.properties").absolutePath}' 2>/dev/null || true
-          echo "$UDID" ;;
+          # Each create gets its own UDID, the first one being UDID; mkdir claims a number atomically.
+          mkdir -p '${root.resolve("udids").absolutePath}'
+          n=1
+          while ! mkdir '${root.resolve("udids").absolutePath}'/"${'$'}n" 2>/dev/null; do n=${'$'}((n + 1)); done
+          if [ "${'$'}n" = 1 ]; then echo "$UDID"; else printf '%s%02d\n' "${UDID.dropLast(2)}" "${'$'}n"; fi ;;
         "simctl bootstatus")
           cp '$RECORDS_DIR'/"${'$'}(cat '${root.resolve("pool-name").absolutePath}')".properties '${root.resolve("record-after-create.properties").absolutePath}' 2>/dev/null || true ;;
         "simctl list")

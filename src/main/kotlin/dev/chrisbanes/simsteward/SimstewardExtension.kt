@@ -15,7 +15,10 @@ abstract class SimstewardExtension {
   /** `simsteward.slim`, default true. */
   abstract val slim: Property<Boolean>
 
-  /** `simsteward.maxSimulators`, default 1. */
+  /**
+   * `simsteward.maxSimulators`, default 2: the most simulators one pool may hold. It is not part of
+   * the simulator spec; each lease request applies its own project's cap to the shared pool.
+   */
   abstract val maxSimulators: Property<Int>
 
   @get:Nested abstract val ios: PlatformSettings

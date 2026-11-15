@@ -5,6 +5,7 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import org.gradle.api.Action
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
@@ -35,7 +36,9 @@ abstract class SimstewardPlugin @Inject constructor(
       val extension = extensions.create("simsteward", SimstewardExtension::class.java)
       extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
       extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(true))
-      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map { it.toInt() }.orElse(1))
+      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map {
+        it.toIntOrNull() ?: throw GradleException("simsteward.maxSimulators must be a whole number, but was '$it'.")
+      }.orElse(2))
       Platform.entries.forEach { platform ->
         val settings = extension.of(platform)
         listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime, "profile" to settings.profile)
@@ -109,9 +112,9 @@ private class LeaseAction(
     service.lease(
       task.path,
       name,
-      service.resolve(platform, settings.runtime.orNull, settings.deviceType.orNull, xcrun.get(), slimming)
-        .copy(maxSimulators = extension.maxSimulators.get()),
+      service.resolve(platform, settings.runtime.orNull, settings.deviceType.orNull, xcrun.get(), slimming),
       ownership,
+      extension.maxSimulators.get().also { if (it < 1) throw GradleException("maxSimulators must be at least 1, but was $it.") },
     )
   }
 }

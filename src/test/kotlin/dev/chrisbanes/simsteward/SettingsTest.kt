@@ -44,15 +44,17 @@ class SettingsTest {
 
   @Test
   fun projectsWithEqualSpecsSharePoolAndDifferentProfilesDoNot() {
+    // A cap of 1 keeps this about pool keys: task-completion events arrive asynchronously, so with a
+    // higher cap the second task can lease before the first one's return lands and grow the pool.
     val build = FixtureBuild(directory)
     build.addModule("lib2")
-    build.build(lib, lib2, "--no-parallel")
+    build.build(lib, lib2, "--no-parallel", "-Psimsteward.maxSimulators=1")
     assertEquals(1, build.creates().size)
 
     val split = FixtureBuild(directory.resolve("split"))
     split.addModule("lib2")
     split.simsteward("lib2", "ios { profile.set(\"other.json\") }")
-    split.build(lib, lib2, "--no-parallel")
+    split.build(lib, lib2, "--no-parallel", "-Psimsteward.maxSimulators=1")
     assertEquals(2, split.creates().size)
   }
 
