@@ -87,10 +87,12 @@ jobs:
           cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - run: ./gradlew spotlessCheck metalavaCheckCompatibility --no-scan
+      # Tests publish to the test repository; a release version must not need signing keys there.
+      - run: ./gradlew publishAllPublicationsToTestRepository -PVERSION_NAME=0.0.0 --no-scan
 
   deploy:
     needs: [test, simulator-smoke, lint]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'chrisbanes/simsteward'
     runs-on: ubuntu-latest
     env:
       ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
