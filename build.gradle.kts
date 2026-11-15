@@ -4,12 +4,10 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
   `java-gradle-plugin`
-  `maven-publish`
   kotlin("jvm") version "2.4.21"
+  id("com.vanniktech.maven.publish") version "0.37.0"
+  id("org.jetbrains.dokka") version "2.3.0"
 }
-
-group = "dev.chrisbanes.simsteward"
-version = "0.1.0-SNAPSHOT"
 
 java {
   sourceCompatibility = JavaVersion.VERSION_17
@@ -84,7 +82,7 @@ val smokeTest by tasks.registering(Test::class) {
 tasks.withType<Test>().configureEach {
   dependsOn("publishAllPublicationsToTestRepository")
   systemProperty("simsteward.testRepository", testRepository.get().asFile.absolutePath)
-  systemProperty("simsteward.version", version.toString())
+  systemProperty("simsteward.version", providers.gradleProperty("VERSION_NAME").get())
   // Each checkout, and each test task, gets its own Gradle user home, so concurrent runs never share records.
   systemProperty("simsteward.testKitDir", layout.buildDirectory.dir("test-kit/$name").get().asFile.absolutePath)
   // `-Psimsteward.test.gradle=<version> -Psimsteward.test.kgp=<version>` select the fixture versions.
