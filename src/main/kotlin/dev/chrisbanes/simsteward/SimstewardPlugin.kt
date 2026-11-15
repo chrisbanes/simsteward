@@ -23,7 +23,7 @@ abstract class SimstewardPlugin @Inject constructor(
       val buildRootHash = sha256(layout.settingsDirectory.asFile.absolutePath).take(8)
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
       val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
-      val slim = providers.gradleProperty("simsteward.ios.slim").map { it.toBoolean() }.orElse(true)
+      val slim = providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(true)
 
       val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets
       tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
@@ -42,7 +42,7 @@ abstract class SimstewardPlugin @Inject constructor(
           xcrun,
           simslim,
           slim,
-          providers.gradleProperty("simsteward.${platform.property}.slimProfile"),
+          providers.gradleProperty("simsteward.${platform.property}.profile"),
         ))
       }
     }

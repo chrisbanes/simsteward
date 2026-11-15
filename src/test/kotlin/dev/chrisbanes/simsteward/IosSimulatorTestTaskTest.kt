@@ -109,7 +109,7 @@ class IosSimulatorTestTaskTest {
   @Test
   fun profileIsPassedToOnAndVerify() {
     val build = FixtureBuild(directory)
-    build.build(task, "-Psimsteward.ios.slimProfile=/profiles/ios.json")
+    build.build(task, "-Psimsteward.ios.profile=/profiles/ios.json")
 
     val udid = FixtureBuild.UDID
     val commands = build.commands()
@@ -158,7 +158,7 @@ class IosSimulatorTestTaskTest {
       ?: error("First command is not a managed create: $commands")
 
   private companion object {
-    const val STOCK = "-Psimsteward.ios.slim=false"
+    const val STOCK = "-Psimsteward.slim=false"
   }
 
   private fun assertLeaseLifecycle(commands: List<String>, device: String) {
