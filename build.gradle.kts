@@ -43,15 +43,6 @@ gradlePlugin {
 
 // Fixtures resolve the plugin from this repository next to real KGP, as consumers do (ADR 0002).
 val testRepository = layout.buildDirectory.dir("test-repository")
-publishing {
-  repositories {
-    maven {
-      name = "test"
-      url = uri(testRepository)
-    }
-  }
-}
-
 // Minimum supported versions, declared in the published metadata and exercised by the CI matrix.
 val minGradle = "8.14"
 val minKgp = "2.2.0"
@@ -67,18 +58,18 @@ listOf("apiElements", "runtimeElements").forEach { name ->
 }
 
 publishing {
+  repositories {
+    maven {
+      name = "test"
+      url = uri(testRepository)
+    }
+  }
   publications.withType<MavenPublication>().configureEach {
     pom {
       properties.put("simsteward.minGradle", minGradle)
       properties.put("simsteward.minKgp", minKgp)
     }
   }
-}
-
-tasks.test {
-  // `-Psimsteward.test.gradle=<version> -Psimsteward.test.kgp=<version>` select the fixture versions.
-  systemProperty("simsteward.test.gradle", providers.gradleProperty("simsteward.test.gradle").getOrElse(minGradle))
-  systemProperty("simsteward.test.kgp", providers.gradleProperty("simsteward.test.kgp").getOrElse(minKgp))
 }
 
 val smokeTest by tasks.registering(Test::class) {
@@ -96,6 +87,9 @@ tasks.withType<Test>().configureEach {
   systemProperty("simsteward.version", version.toString())
   // Each checkout, and each test task, gets its own Gradle user home, so concurrent runs never share records.
   systemProperty("simsteward.testKitDir", layout.buildDirectory.dir("test-kit/$name").get().asFile.absolutePath)
+  // `-Psimsteward.test.gradle=<version> -Psimsteward.test.kgp=<version>` select the fixture versions.
+  systemProperty("simsteward.test.gradle", providers.gradleProperty("simsteward.test.gradle").getOrElse(minGradle))
+  systemProperty("simsteward.test.kgp", providers.gradleProperty("simsteward.test.kgp").getOrElse(minKgp))
   inputs.dir(testRepository)
 }
 
