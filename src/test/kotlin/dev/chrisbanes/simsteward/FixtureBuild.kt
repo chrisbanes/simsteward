@@ -42,7 +42,7 @@ class FixtureBuild(val root: File) {
       """
       org.gradle.configuration-cache=true
       org.gradle.configuration-cache.problems=fail
-      simsteward.xcrun=${fake("xcrun", XCRUN)}
+      simsteward.xcrun=${fake("xcrun", XCRUN.replace("@ROOT@", root.absolutePath))}
       simsteward.simslim=${fake("simslim", SIMSLIM)}
       simsteward.ios.deviceType=$DEVICE_TYPE
       simsteward.ios.runtime=$RUNTIME
@@ -91,12 +91,20 @@ class FixtureBuild(val root: File) {
   /** Makes the fakes fail every command that starts with [command], such as `simctl create`. */
   fun failOn(command: String) = failFile.writeText(command)
 
+  /** Makes the fake `simctl list devices` report these simulators, as `name to udid` pairs. */
+  fun listDevices(vararg devices: Pair<String, String>) {
+    root.resolve("devices.txt").writeText(
+      "== Devices ==\n-- iOS 27.0 --\n" + devices.joinToString("") { (name, udid) -> "    $name ($udid) (Shutdown) \n" },
+    )
+  }
+
   fun commands(): List<String> = if (commandLog.exists()) commandLog.readLines() else emptyList()
 
   fun clearCommands() = commandLog.delete()
 
   fun runner(vararg arguments: String): GradleRunner = GradleRunner.create()
     .withProjectDir(root)
+    .withTestKitDir(TEST_KIT_DIR)
     .withGradleVersion(GRADLE_VERSION)
     .forwardOutput()
     .withArguments(*arguments, "--no-scan", "--stacktrace")
@@ -138,9 +146,20 @@ class FixtureBuild(val root: File) {
     private val TEST_REPOSITORY = System.getProperty("simsteward.testRepository")
     private val SIMSTEWARD_VERSION = System.getProperty("simsteward.version")
 
+    /** Simsteward's ownership records live under the Gradle user home, which is this TestKit dir. */
+    val TEST_KIT_DIR = File(System.getProperty("java.io.tmpdir"), ".gradle-test-kit-${System.getProperty("user.name")}")
+    val RECORDS_DIR = TEST_KIT_DIR.resolve("simsteward/records")
+
+    // The create and bootstatus cases snapshot the ownership record as the build owns it.
     private val XCRUN = """
       case "${'$'}1 ${'$'}2" in
-        "simctl create") echo "$UDID" ;;
+        "simctl create")
+          echo "${'$'}3" > '@ROOT@/pool-name'
+          cp '$RECORDS_DIR'/"${'$'}3.properties" '@ROOT@/record-at-create.properties' 2>/dev/null || true
+          echo "$UDID" ;;
+        "simctl bootstatus")
+          cp '$RECORDS_DIR'/"${'$'}(cat '@ROOT@/pool-name')".properties '@ROOT@/record-after-create.properties' 2>/dev/null ;;
+        "simctl list") cat '@ROOT@/devices.txt' 2>/dev/null || true ;;
       esac
     """
 

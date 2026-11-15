@@ -87,11 +87,12 @@ class IosSimulatorTestTaskTest {
 
   private fun assertLeaseLifecycle(commands: List<String>, device: String) {
     val udid = FixtureBuild.UDID
-    val pool = Regex("xcrun simctl create (simsteward-\\S+) ").find(commands.first())?.groupValues?.get(1)
+    val pool = commands.firstNotNullOfOrNull { Regex("xcrun simctl create (simsteward-\\S+) ").find(it) }?.groupValues?.get(1)
       ?: error("First command is not a managed create: $commands")
     assertNotEquals(device, pool)
     assertEquals(
       listOf(
+        "xcrun simctl list devices",
         "xcrun simctl create $pool ${FixtureBuild.DEVICE_TYPE} ${FixtureBuild.RUNTIME}",
         "xcrun simctl bootstatus $udid -b",
         "xcrun simctl rename $udid $device",
