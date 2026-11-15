@@ -16,10 +16,11 @@ pluginManagement {
 }
 ```
 
-In the build file of a Kotlin Multiplatform project:
+In the build file of a Kotlin Multiplatform project, apply the plugin in the same `plugins {}` block as Kotlin Multiplatform (or in a project below the one that declares it), so the Kotlin Gradle plugin is visible to simsteward:
 
 ```kotlin
 plugins {
+  kotlin("multiplatform") version "<kotlin version>"
   id("dev.chrisbanes.simsteward") version "<version>"
 }
 ```

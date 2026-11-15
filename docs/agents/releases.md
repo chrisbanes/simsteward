@@ -18,9 +18,14 @@ credits.
 
 ## Release steps
 
-1. Commit `Prepare for release X.Y.Z`: set `VERSION_NAME` to `X.Y.Z`, date the `Unreleased`
+1. Run `./gradlew metalavaGenerateSignature` so `api/api.txt` reflects current sources; the
+   compatibility check does not flag additions, so it can be stale.
+2. Commit `Prepare for release X.Y.Z`: set `VERSION_NAME` to `X.Y.Z`, date the `Unreleased`
    changelog section, and copy `api/api.txt` to `api/X.Y.Z.txt`.
-2. Tag the commit `X.Y.Z`.
-3. The `deploy` CI job on `main` publishes to Maven Central and releases automatically.
-4. Create the GitHub release for the tag.
-5. Commit `Prepare next development version`: set `VERSION_NAME` to the next `-SNAPSHOT`.
+3. Push that commit on its own, then tag it `X.Y.Z`.
+4. The `deploy` CI job on `main` publishes to Maven Central and releases automatically. Wait for it
+   to succeed. A push runs CI only for its head commit, so pushing the next commit with it would
+   deploy only the snapshot. Release-version builds sign only when a signing key is configured: CI's
+   `deploy` has the keys, local test runs skip signing.
+5. Create the GitHub release for the tag.
+6. Commit `Prepare next development version`: set `VERSION_NAME` to the next `-SNAPSHOT`, and push.
