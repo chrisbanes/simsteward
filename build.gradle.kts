@@ -7,6 +7,7 @@ plugins {
   kotlin("jvm") version "2.4.21"
   id("com.vanniktech.maven.publish") version "0.37.0"
   id("org.jetbrains.dokka") version "2.3.0"
+  id("me.tylerbwong.gradle.metalava") version "0.5.1"
 }
 
 java {
@@ -20,6 +21,29 @@ kotlin {
     // Gradle 8.14 embeds Kotlin 2.0, so its build scripts must be able to read our metadata.
     apiVersion = KotlinVersion.KOTLIN_2_0
     languageVersion = KotlinVersion.KOTLIN_2_0
+  }
+}
+
+val metalavaVersion = "1.0.0-alpha14"
+
+metalava {
+  filename.set("api/api.txt")
+  excludedSourceSets.setFrom(sourceSets.test.get().kotlin.sourceDirectories)
+  version.set(metalavaVersion)
+}
+
+// The plugin resolves its default version while applying, before the extension above is configured.
+configurations.named("metalava") {
+  resolutionStrategy.force("com.android.tools.metalava:metalava:$metalavaVersion")
+}
+
+// Metalava can write an extra blank line at EOF; keep the checked-in signature stable.
+tasks.named("metalavaGenerateSignature").configure {
+  val apiFile = layout.projectDirectory.file("api/api.txt").asFile
+  doLast {
+    val contents = apiFile.readText()
+    val normalized = contents.trimEnd() + "\n"
+    if (contents != normalized) apiFile.writeText(normalized)
   }
 }
 

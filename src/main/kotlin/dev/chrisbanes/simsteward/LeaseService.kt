@@ -35,7 +35,7 @@ internal data class Slimming(val slim: Boolean, val simslim: String, val profile
  * It has no parameters because projects register it in no fixed order (ADR 0002): each lease
  * request carries its own [SimulatorSpec].
  */
-abstract class LeaseService :
+internal abstract class LeaseService :
   BuildService<BuildServiceParameters.None>,
   OperationCompletionListener,
   AutoCloseable {

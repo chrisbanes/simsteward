@@ -104,7 +104,7 @@ abstract class SimstewardPlugin @Inject constructor(
 }
 
 /** The manual counterpart of the reaping that runs before a build's first lease. */
-abstract class ReapTask : DefaultTask() {
+internal abstract class ReapTask : DefaultTask() {
   @get:Internal abstract val service: Property<LeaseService>
   @get:Input abstract val xcrun: Property<String>
   @get:Internal abstract val recordsDir: DirectoryProperty
