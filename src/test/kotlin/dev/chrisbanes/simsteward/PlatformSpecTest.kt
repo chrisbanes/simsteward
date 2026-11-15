@@ -1,3 +1,6 @@
+// Copyright 2026, Christopher Banes and the Simsteward project contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package dev.chrisbanes.simsteward
 
 import java.io.File

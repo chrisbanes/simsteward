@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
+  ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
 jobs:
   test:
     name: test (${{ matrix.name }})
@@ -26,9 +32,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          distribution: temurin
+          distribution: zulu
           java-version: ${{ matrix.java }}
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - run: ./gradlew test --no-scan ${{ matrix.args }}
       - if: failure()
         uses: actions/upload-artifact@v7
@@ -43,9 +52,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          distribution: temurin
+          distribution: zulu
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - run: brew install mobai-app/tap/simslim
       - run: ./gradlew smokeTest --no-scan
       - if: failure()
@@ -53,3 +65,40 @@ jobs:
         with:
           name: simulator-smoke-reports
           path: build/reports/tests/smokeTest
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - run: ./gradlew spotlessCheck metalavaCheckCompatibility --no-scan
+
+  deploy:
+    needs: [test, simulator-smoke, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'chrisbanes/simsteward'
+    runs-on: ubuntu-latest
+    env:
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.GPG_KEY_ID }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_KEY_PASSWORD }}
+      # Only deploy signs; other builds publish unsigned, including to the test repository.
+      ORG_GRADLE_PROJECT_signAllPublications: 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+      - run: ./gradlew publish --no-scan --no-configuration-cache

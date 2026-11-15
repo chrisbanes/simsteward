@@ -1,15 +1,20 @@
+// Copyright 2026, Christopher Banes and the Simsteward project contributors
+// SPDX-License-Identifier: Apache-2.0
+
+
+import com.diffplug.spotless.LineEnding
 import org.gradle.api.attributes.plugin.GradlePluginApiVersion
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
   `java-gradle-plugin`
-  `maven-publish`
   kotlin("jvm") version "2.4.21"
+  id("com.vanniktech.maven.publish") version "0.37.0"
+  id("org.jetbrains.dokka") version "2.3.0"
+  id("me.tylerbwong.gradle.metalava") version "0.5.1"
+  id("com.diffplug.spotless") version "8.11.0"
 }
-
-group = "dev.chrisbanes.simsteward"
-version = "0.1.0-SNAPSHOT"
 
 java {
   sourceCompatibility = JavaVersion.VERSION_17
@@ -22,6 +27,29 @@ kotlin {
     // Gradle 8.14 embeds Kotlin 2.0, so its build scripts must be able to read our metadata.
     apiVersion = KotlinVersion.KOTLIN_2_0
     languageVersion = KotlinVersion.KOTLIN_2_0
+  }
+}
+
+val metalavaVersion = "1.0.0-alpha16"
+
+metalava {
+  filename.set("api/api.txt")
+  excludedSourceSets.setFrom(sourceSets.test.get().kotlin.sourceDirectories)
+  version.set(metalavaVersion)
+}
+
+// The plugin resolves its default version while applying, before the extension above is configured.
+configurations.named("metalava") {
+  resolutionStrategy.force("com.android.tools.metalava:metalava:$metalavaVersion")
+}
+
+// Metalava can write an extra blank line at EOF; keep the checked-in signature stable.
+tasks.named("metalavaGenerateSignature").configure {
+  val apiFile = layout.projectDirectory.file("api/api.txt").asFile
+  doLast {
+    val contents = apiFile.readText()
+    val normalized = contents.trimEnd() + "\n"
+    if (contents != normalized) apiFile.writeText(normalized)
   }
 }
 
@@ -84,7 +112,7 @@ val smokeTest by tasks.registering(Test::class) {
 tasks.withType<Test>().configureEach {
   dependsOn("publishAllPublicationsToTestRepository")
   systemProperty("simsteward.testRepository", testRepository.get().asFile.absolutePath)
-  systemProperty("simsteward.version", version.toString())
+  systemProperty("simsteward.version", providers.gradleProperty("VERSION_NAME").get())
   // Each checkout, and each test task, gets its own Gradle user home, so concurrent runs never share records.
   systemProperty("simsteward.testKitDir", layout.buildDirectory.dir("test-kit/$name").get().asFile.absolutePath)
   // `-Psimsteward.test.gradle=<version> -Psimsteward.test.kgp=<version>` select the fixture versions.
@@ -95,4 +123,21 @@ tasks.withType<Test>().configureEach {
 
 tasks.test {
   useJUnitPlatform { excludeTags("smoke") }
+}
+
+spotless {
+  // Workaround for https://github.com/diffplug/spotless/issues/1644
+  lineEndings = LineEnding.PLATFORM_NATIVE
+
+  kotlin {
+    target("src/**/*.kt")
+    ktlint("1.0.1")
+    licenseHeaderFile(file("spotless/copyright.txt"))
+  }
+
+  kotlinGradle {
+    target("*.kts")
+    ktlint("1.0.1")
+    licenseHeaderFile(file("spotless/copyright.txt"), "(^(?![\\/ ]\\**).*$)")
+  }
 }

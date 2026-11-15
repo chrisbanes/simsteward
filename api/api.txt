@@ -1,0 +1,37 @@
+// Signature format: 4.0
+package dev.chrisbanes.simsteward {
+
+  public interface PlatformSettings {
+    method @InaccessibleFromKotlin public org.gradle.api.provider.Property<java.lang.String> getDeviceType();
+    method @InaccessibleFromKotlin public org.gradle.api.provider.Property<java.lang.String> getProfile();
+    method @InaccessibleFromKotlin public org.gradle.api.provider.Property<java.lang.String> getRuntime();
+    property public abstract org.gradle.api.provider.Property<java.lang.String> deviceType;
+    property public abstract org.gradle.api.provider.Property<java.lang.String> profile;
+    property public abstract org.gradle.api.provider.Property<java.lang.String> runtime;
+  }
+
+  public abstract class SimstewardExtension {
+    ctor public SimstewardExtension();
+    method @InaccessibleFromKotlin public abstract org.gradle.api.provider.Property<java.lang.Boolean> getEnabled();
+    method @InaccessibleFromKotlin @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings getIos();
+    method @InaccessibleFromKotlin public abstract org.gradle.api.provider.Property<java.lang.Integer> getMaxSimulators();
+    method @InaccessibleFromKotlin public abstract org.gradle.api.provider.Property<java.lang.Boolean> getSlim();
+    method @InaccessibleFromKotlin @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings getTvos();
+    method @InaccessibleFromKotlin @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings getWatchos();
+    method public final void ios(org.gradle.api.Action<dev.chrisbanes.simsteward.PlatformSettings> action);
+    method public final void tvos(org.gradle.api.Action<dev.chrisbanes.simsteward.PlatformSettings> action);
+    method public final void watchos(org.gradle.api.Action<dev.chrisbanes.simsteward.PlatformSettings> action);
+    property public abstract org.gradle.api.provider.Property<java.lang.Boolean> enabled;
+    property @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings ios;
+    property public abstract org.gradle.api.provider.Property<java.lang.Integer> maxSimulators;
+    property public abstract org.gradle.api.provider.Property<java.lang.Boolean> slim;
+    property @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings tvos;
+    property @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings watchos;
+  }
+
+  public abstract class SimstewardPlugin implements org.gradle.api.Plugin<org.gradle.api.Project> {
+    ctor @javax.inject.Inject public SimstewardPlugin(org.gradle.build.event.BuildEventsListenerRegistry buildEvents);
+    method public void apply(org.gradle.api.Project target);
+  }
+
+}
