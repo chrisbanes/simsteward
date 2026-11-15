@@ -11,8 +11,9 @@ import org.gradle.testkit.runner.GradleRunner
  * Every fake invocation is appended to [commands]. [failOn] makes the fakes fail any command
  * that starts with the given words.
  *
- * KGP's own `simctl spawn` uses a hard-coded `/usr/bin/xcrun`, so the fixture stops each
- * simulator test task after simsteward's lease and before KGP's test action.
+ * KGP's own `simctl spawn` uses a hard-coded `/usr/bin/xcrun`, so the fixture replaces KGP's
+ * test action with its own: a passing run reports no suite, and a failing run (`fixture.failTest`)
+ * reports the root suite finished to the task's test listeners, then throws, as KGP does.
  */
 class FixtureBuild(
   val root: File,
@@ -63,6 +64,11 @@ class FixtureBuild(
     root.resolve("$name/build.gradle.kts").writeText(
       """
       import java.io.File
+      import java.lang.reflect.Proxy
+      import org.gradle.api.tasks.testing.AbstractTestTask
+      import org.gradle.api.tasks.testing.TestDescriptor
+      import org.gradle.api.tasks.testing.TestListener
+      import org.gradle.api.tasks.testing.TestResult
       import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
 
       plugins {
@@ -87,6 +93,8 @@ class FixtureBuild(
 
       // Registered before simsteward so that simsteward's doFirst runs before this one.
       tasks.withType<KotlinNativeSimulatorTest>().configureEach {
+        // Drops KGP's test action; the doFirst below stands in for it.
+        actions.clear()
         setDependsOn(listOf(swiftImportStubs))
         executable(file("test.kexe"))
         val failTest = project.providers.gradleProperty("fixture.failTest").isPresent
@@ -114,8 +122,19 @@ class FixtureBuild(
               Thread.sleep(10)
             }
           }
-          if (failTest) throw GradleException("fixture test failure")
-          throw StopExecutionException()
+          if (failTest) {
+            // Gradle has no public way to fire test events, so reach the listeners the task holds.
+            val field = AbstractTestTask::class.java.getDeclaredField("testListenerSubscriptions")
+            val subscriptions = field.apply { isAccessible = true }.get(this)
+            val listeners = subscriptions.javaClass.getDeclaredField("subscribedListeners").apply { isAccessible = true }.get(subscriptions) as List<*>
+            fun <T> stub(type: Class<T>): T = type.cast(Proxy.newProxyInstance(type.classLoader, arrayOf(type)) { _, method, _ ->
+              if (method.name == "toString") "fixture root suite" else null
+            })
+            val root = stub(TestDescriptor::class.java)
+            val result = stub(TestResult::class.java)
+            listeners.filterIsInstance<TestListener>().forEach { it.afterSuite(root, result) }
+            throw GradleException("fixture test failure")
+          }
         }
       }
 
@@ -202,7 +221,7 @@ class FixtureBuild(
     private val SIMSTEWARD_VERSION = System.getProperty("simsteward.version")
 
     /** Simsteward's ownership records live under the Gradle user home, which is this TestKit dir. */
-    val TEST_KIT_DIR = File(System.getProperty("java.io.tmpdir"), ".gradle-test-kit-${System.getProperty("user.name")}")
+    val TEST_KIT_DIR = File(System.getProperty("simsteward.testKitDir"))
     val RECORDS_DIR = TEST_KIT_DIR.resolve("simsteward/records")
 
     // The create and bootstatus cases snapshot the ownership record as the build owns it.

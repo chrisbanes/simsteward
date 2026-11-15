@@ -56,6 +56,22 @@ class PlatformSpecTest {
   }
 
   @Test
+  fun newestRuntimeComparesEachVersionComponent() {
+    val build = FixtureBuild(directory, pinned = false)
+    build.installRuntimes(
+      FixtureBuild.runtimesJson(
+        FixtureBuild.runtime("iOS", "18.3.1", "iPhone", "iPhone 16"),
+        FixtureBuild.runtime("iOS", "18.4", "iPhone", "iPhone 16"),
+        FixtureBuild.runtime("iOS", "17.6.1", "iPhone", "iPhone 16"),
+      ),
+    )
+
+    build.build(":lib:iosSimulatorArm64Test")
+
+    assertEquals(listOf(listOf("$dt.iPhone-16", "$rt.iOS-18-4")), creates(build))
+  }
+
+  @Test
   fun missingRuntimeFailsNamingPlatformAndWhatToInstall() {
     val build = FixtureBuild(directory, pinned = false, targets = listOf("watchosSimulatorArm64()"))
     build.installRuntimes(FixtureBuild.runtimesJson(FixtureBuild.runtime("iOS", "27.0", "iPhone", "iPhone 17")))

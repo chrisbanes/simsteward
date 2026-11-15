@@ -3,6 +3,9 @@ package dev.chrisbanes.simsteward
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.Serializable
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.util.Properties
 import java.util.UUID
 import javax.inject.Inject
@@ -20,9 +23,7 @@ internal data class SimulatorSpec(
   val deviceType: String,
   val runtime: String,
   val xcrun: String,
-  val slim: Boolean,
-  val simslim: String,
-  val profile: String?,
+  val slimming: Slimming,
 ) : Serializable
 
 /** Where this build's ownership records live (under the Gradle user home) and which build owns them. */
@@ -53,12 +54,13 @@ abstract class LeaseService :
   private val pools = mutableMapOf<SimulatorSpec, MutableList<ManagedSimulator>>()
   private val creating = mutableMapOf<SimulatorSpec, Int>()
   private val leases = mutableMapOf<String, ManagedSimulator>()
+  private val returning = mutableSetOf<ManagedSimulator>()
   private val lock = Object()
 
   /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */
   internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String, slimming: Slimming): SimulatorSpec =
     if (runtime != null && deviceType != null) {
-      SimulatorSpec(deviceType, runtime, xcrun, slimming.slim, slimming.simslim, slimming.profile)
+      SimulatorSpec(deviceType, runtime, xcrun, slimming)
     } else {
       resolveSpec(platform, simctl(xcrun, "list", "-j", "runtimes"), runtime, deviceType, xcrun, slimming)
     }
@@ -85,11 +87,12 @@ abstract class LeaseService :
   private fun reserve(taskPath: String, spec: SimulatorSpec, ownership: Ownership, maxSimulators: Int): ManagedSimulator? =
     synchronized(lock) {
       if (!reaped) {
+        // shortcut: reaps once, with the first lease's xcrun and records dir; reap per distinct pair if builds mix them.
         reap(spec.xcrun, ownership.recordsDir)
         reaped = true
       }
       val pool = pools.getOrPut(spec) { mutableListOf() }
-      fun idle() = pool.firstOrNull { it !in leases.values }
+      fun idle() = pool.firstOrNull { it !in leases.values && it !in returning }
       var waiting = false
       while (idle() == null && pool.size + creating.getOrDefault(spec, 0) >= maxSimulators) {
         if (!waiting) {
@@ -116,19 +119,26 @@ abstract class LeaseService :
     )
   }
 
-  override fun onFinish(event: FinishEvent) {
-    if (event !is TaskFinishEvent) return
-    val taskPath = event.descriptor.taskPath
-    val simulator = synchronized(lock) { leases[taskPath] } ?: return
+  /**
+   * Returns [taskPath]'s lease, if it holds one. The task calls this when its own work ends;
+   * [onFinish] calls it again as the backstop, and only the first call does anything.
+   */
+  internal fun release(taskPath: String) {
+    val simulator = synchronized(lock) { leases.remove(taskPath)?.also { returning += it } } ?: return
     try {
       simctl(simulator.xcrun, "rename", simulator.udid, simulator.poolName)
     } finally {
       // Only now is it idle, so a waiting task cannot rename it before this rename back.
       synchronized(lock) {
-        leases.remove(taskPath)
+        returning -= simulator
         lock.notifyAll()
       }
     }
+  }
+
+  /** Gradle delivers these off-thread and late, so tasks normally return their lease first. */
+  override fun onFinish(event: FinishEvent) {
+    if (event is TaskFinishEvent) release(event.descriptor.taskPath)
   }
 
   override fun close(): Unit = synchronized(lock) {
@@ -143,6 +153,7 @@ abstract class LeaseService :
     pools.clear()
     creating.clear()
     leases.clear()
+    returning.clear()
     failures.firstOrNull()?.let { first -> throw first.apply { failures.drop(1).forEach(::addSuppressed) } }
   }
 
@@ -163,11 +174,12 @@ abstract class LeaseService :
     writeRecord(record, readRecord(record) + ("udid" to udid))
     val simulator = ManagedSimulator(udid, poolName, spec.xcrun, record)
     synchronized(lock) { created += simulator }
-    if (spec.slim) {
+    val slimming = spec.slimming
+    if (slimming.slim) {
       // `simslim on` leaves the simulator booted; there is no fallback to stock if it fails.
-      val profile = listOfNotNull(spec.profile?.let { "--profile" }, spec.profile)
-      run(listOf(spec.simslim, "on", udid) + profile)
-      run(listOf(spec.simslim, "verify", udid) + profile)
+      val profile = listOfNotNull(slimming.profile?.let { "--profile" }, slimming.profile)
+      run(listOf(slimming.simslim, "on", udid) + profile)
+      run(listOf(slimming.simslim, "verify", udid) + profile)
     } else {
       // Stock simulators must be booted: KGP needs a booted device when standalone is false.
       simctl(spec.xcrun, "bootstatus", udid, "-b")
@@ -216,14 +228,23 @@ abstract class LeaseService :
   }
 
   private fun ownerIsAlive(pid: Long, startTime: Long): Boolean = ProcessHandle.of(pid).map { handle ->
-    // Without a start time we cannot prove the PID was reused, so the owner counts as alive.
+    // shortcut: an owner whose start time is unknown counts as alive, so its simulators leak until a later
+    // build sees the PID gone; compare another process attribute if that leaks in practice.
     handle.info().startInstant().map { it.toEpochMilli() == startTime }.orElse(true)
   }.orElse(false)
 
+  /** Replaces [file] atomically, so a reaper never reads a half-written record. */
   private fun writeRecord(file: File, values: Map<String, String>) {
     file.parentFile.mkdirs()
     val properties = Properties().apply { values.forEach { (k, v) -> setProperty(k, v) } }
-    file.writer().use { properties.store(it, null) }
+    // The `.tmp` suffix keeps it out of the reaper's `*.properties` listing.
+    val temp = Files.createTempFile(file.parentFile.toPath(), file.name, ".tmp")
+    try {
+      Files.newBufferedWriter(temp).use { properties.store(it, null) }
+      Files.move(temp, file.toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
+    } finally {
+      Files.deleteIfExists(temp)
+    }
   }
 
   private fun readRecord(file: File): Map<String, String> = runCatching {

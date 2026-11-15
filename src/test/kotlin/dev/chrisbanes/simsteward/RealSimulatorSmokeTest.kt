@@ -27,6 +27,7 @@ class RealSimulatorSmokeTest {
 
     val first = runner().build()
     assertEquals(TaskOutcome.SUCCESS, first.task(task)?.outcome, first.output)
+    assertTrue(LEASE_LINE in first.output, first.output)
     val report = directory.resolve("lib/build/test-results/iosSimulatorArm64Test").listFiles { f -> f.extension == "xml" }.orEmpty()
       .joinToString { it.readText() }
     assertTrue(Regex("""tests="[1-9]\d*"""").containsMatchIn(report) && """failures="0"""" in report && """errors="0"""" in report, report)
@@ -34,11 +35,14 @@ class RealSimulatorSmokeTest {
 
     val second = runner().build()
     assertEquals(TaskOutcome.UP_TO_DATE, second.task(task)?.outcome, second.output)
-    assertEquals(emptyList(), managedSimulators(), "an up-to-date rerun created a simulator")
+    // A lease is the only way simsteward creates a simulator, so no lease line means none was created.
+    assertTrue(LEASE_LINE !in second.output, second.output)
+    assertEquals(emptyList(), managedSimulators(), "managed simulators remain after the rerun")
   }
 
   private fun runner() = GradleRunner.create()
     .withProjectDir(directory)
+    .withTestKitDir(File(System.getProperty("simsteward.testKitDir")))
     .withGradleVersion("8.14")
     .forwardOutput()
     .withArguments(task, "--no-scan", "--stacktrace")
@@ -94,5 +98,6 @@ class RealSimulatorSmokeTest {
   private companion object {
     // Matches a Kotlin/Native toolchain that CI and dev machines already cache.
     const val KGP_VERSION = "2.3.21"
+    const val LEASE_LINE = "leased managed simulator"
   }
 }

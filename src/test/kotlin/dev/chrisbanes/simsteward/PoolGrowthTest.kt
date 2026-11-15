@@ -60,6 +60,32 @@ class PoolGrowthTest {
   }
 
   @Test
+  fun sequentialTasksAtTheDefaultCapShareOneSimulator() {
+    assertEquals(List(BUILDS) { 1 }, sequentialBuilds { build(*it) }.map { it.creates().size })
+  }
+
+  @Test
+  fun sequentialFailingTasksAtTheDefaultCapShareOneSimulator() {
+    val builds = sequentialBuilds { buildAndFail(*it, "--continue", "-Pfixture.failTest") }
+    assertEquals(List(BUILDS) { 1 }, builds.map { it.creates().size })
+    assertEquals(List(BUILDS) { SEQUENTIAL_MODULES.size }, builds.map { b -> b.count { it.startsWith("test ") } })
+  }
+
+  /**
+   * Runs one task per module, one at a time, [BUILDS] times, and returns each build's commands.
+   * Reruns reuse the configuration cache and run fast, which is when a late lease return showed.
+   */
+  private fun sequentialBuilds(run: FixtureBuild.(Array<String>) -> Unit): List<List<String>> {
+    val build = FixtureBuild(directory)
+    SEQUENTIAL_MODULES.drop(1).forEach(build::addModule)
+    return List(BUILDS) {
+      build.clearCommands()
+      build.run(arrayOf(*tasks(*SEQUENTIAL_MODULES.toTypedArray()), "--max-workers=1", "--rerun-tasks"))
+      build.commands()
+    }
+  }
+
+  @Test
   fun maxSimulatorsPropertyCapsThePool() {
     val build = FixtureBuild(directory)
     build.addModule("second")
@@ -138,11 +164,15 @@ class PoolGrowthTest {
 
   private companion object {
     const val OTHER_UDID = "0A1B2C3D-0000-4000-8000-000000000001"
+    const val BUILDS = 3
+    val SEQUENTIAL_MODULES = listOf("lib", "second", "third", "fourth", "fifth", "sixth")
   }
 
   private fun tasks(vararg modules: String) = modules.map { ":$it:iosSimulatorArm64Test" }.toTypedArray()
 
-  private fun FixtureBuild.creates() = commands().filter { it.startsWith("xcrun simctl create ") }
+  private fun FixtureBuild.creates() = commands().creates()
+
+  private fun List<String>.creates() = filter { it.startsWith("xcrun simctl create ") }
 
   /** UDID to device name, for each rename to a task's name. */
   private fun FixtureBuild.leaseRenames(): Map<String, String> = commands()

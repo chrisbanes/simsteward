@@ -94,6 +94,8 @@ tasks.withType<Test>().configureEach {
   dependsOn("publishAllPublicationsToTestRepository")
   systemProperty("simsteward.testRepository", testRepository.get().asFile.absolutePath)
   systemProperty("simsteward.version", version.toString())
+  // Each checkout, and each test task, gets its own Gradle user home, so concurrent runs never share records.
+  systemProperty("simsteward.testKitDir", layout.buildDirectory.dir("test-kit/$name").get().asFile.absolutePath)
   inputs.dir(testRepository)
 }
 

@@ -1,20 +1,22 @@
 package dev.chrisbanes.simsteward
 
-import java.io.File
 import java.security.MessageDigest
 import javax.inject.Inject
 import org.gradle.api.Action
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
-import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.provider.Property
-import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.Internal
-import org.gradle.api.tasks.TaskAction
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestListener
+import org.gradle.api.tasks.testing.TestResult
 import org.gradle.build.event.BuildEventsListenerRegistry
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
@@ -36,9 +38,7 @@ abstract class SimstewardPlugin @Inject constructor(
       val extension = extensions.create("simsteward", SimstewardExtension::class.java)
       extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
       extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(true))
-      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map {
-        it.toIntOrNull() ?: throw GradleException("simsteward.maxSimulators must be a whole number, but was '$it'.")
-      }.orElse(2))
+      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map(::parseMaxSimulators).orElse(2))
       Platform.entries.forEach { platform ->
         val settings = extension.of(platform)
         listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime, "profile" to settings.profile)
@@ -62,22 +62,23 @@ abstract class SimstewardPlugin @Inject constructor(
       targets.withType(KotlinNativeTarget::class.java).configureEach { families.put(it.name, it.konanTarget.family) }
       // Deferred so that the project's own `simsteward {}` block has run.
       afterEvaluate {
-      if (!extension.enabled.get()) return@afterEvaluate
-      tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
-        val name = "$NAME_PREFIX-$buildRootHash${task.path}"
-        task.standalone.set(false)
-        task.device.set(name)
-        task.usesService(leases)
-        task.doFirst(LeaseAction(
-          leases,
-          name,
-          families,
-          extension,
-          xcrun,
-          simslim,
-          Ownership(recordsDir, buildRoot),
-        ))
-      }
+        if (!extension.enabled.get()) return@afterEvaluate
+        tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
+          val name = "$NAME_PREFIX-$buildRootHash${task.path}"
+          task.standalone.set(false)
+          task.device.set(name)
+          task.usesService(leases)
+          task.doFirst(LeaseAction(
+            leases,
+            name,
+            families,
+            extension,
+            xcrun,
+            simslim,
+            Ownership(recordsDir, buildRoot),
+          ))
+          task.doLast(ReleaseAction(leases))
+        }
       }
     }
   }
@@ -93,7 +94,11 @@ abstract class ReapTask : DefaultTask() {
   fun reap() = service.get().reap(xcrun.get(), recordsDir.get().asFile)
 }
 
-/** Takes the task's lease when it actually runs; [LeaseService.onFinish] returns it. */
+/**
+ * Takes the task's lease when it actually runs. The task returns it when its tests end, through
+ * [ReleaseAction] or, when KGP's action throws on a test failure, the root suite's `afterSuite`.
+ * [LeaseService.onFinish] is the late backstop for anything else.
+ */
 private class LeaseAction(
   private val leases: Provider<LeaseService>,
   private val name: String,
@@ -104,7 +109,8 @@ private class LeaseAction(
   private val ownership: Ownership,
 ) : Action<Task> {
   override fun execute(task: Task) {
-    val family = families.get().getValue(checkNotNull((task as KotlinNativeSimulatorTest).targetName))
+    task as KotlinNativeSimulatorTest
+    val family = families.get().getValue(checkNotNull(task.targetName))
     val platform = Platform.of(family) ?: return
     val service = leases.get()
     val settings = extension.of(platform)
@@ -114,10 +120,30 @@ private class LeaseAction(
       name,
       service.resolve(platform, settings.runtime.orNull, settings.deviceType.orNull, xcrun.get(), slimming),
       ownership,
-      extension.maxSimulators.get().also { if (it < 1) throw GradleException("maxSimulators must be at least 1, but was $it.") },
+      checkMaxSimulators(extension.maxSimulators.get()),
     )
+    // Added at execution, so the listener never enters the configuration cache.
+    task.addTestListener(object : TestListener {
+      override fun beforeSuite(suite: TestDescriptor) = Unit
+      override fun beforeTest(testDescriptor: TestDescriptor) = Unit
+      override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) = Unit
+      override fun afterSuite(suite: TestDescriptor, result: TestResult) {
+        if (suite.parent == null) service.release(task.path)
+      }
+    })
   }
 }
+
+private class ReleaseAction(private val leases: Provider<LeaseService>) : Action<Task> {
+  override fun execute(task: Task) = leases.get().release(task.path)
+}
+
+private fun parseMaxSimulators(text: String): Int =
+  text.toIntOrNull() ?: throw GradleException("simsteward.maxSimulators must be a whole number, but was '$text'.")
+
+/** The one place a cap is range-checked, when it is read, whether it came from the property or the extension. */
+private fun checkMaxSimulators(value: Int): Int =
+  value.also { if (it < 1) throw GradleException("maxSimulators must be at least 1, but was $it.") }
 
 internal const val NAME_PREFIX = "simsteward"
 

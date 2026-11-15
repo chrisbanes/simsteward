@@ -41,14 +41,17 @@ internal fun resolveSpec(
     .filter { deviceType?.let { pinned -> it["identifier"] == pinned } ?: (it["productFamily"] == platform.productFamily) }
     .map { it["identifier"] as String }
 
-  // shortcut: compares dotted numeric versions only; fine until simctl reports non-numeric ones.
-  val candidates = runtimes.filter { supported(it).isNotEmpty() }
-    .sortedWith(compareByDescending<Map<*, *>> { r -> (r["version"] as String).split('.').map { it.toIntOrNull() ?: 0 }.fold(0L) { acc, n -> acc * 1000 + n } })
+  // shortcut: reads a non-numeric version component as 0; parse it properly if simctl ever reports one.
+  fun version(r: Map<*, *>) = (r["version"] as String).split('.').map { it.toIntOrNull() ?: 0 }
+  val newestFirst = Comparator<List<Int>> { a, b ->
+    a.zip(b).map { (x, y) -> y.compareTo(x) }.firstOrNull { it != 0 } ?: b.size.compareTo(a.size)
+  }
+  val candidates = runtimes.filter { supported(it).isNotEmpty() }.sortedWith(compareBy(newestFirst, ::version))
   val best = candidates.firstOrNull() ?: throw GradleException(
     "No installed ${platform.simctlName} simulator ${if (runtime != null) "runtime $runtime" else "runtime"}" +
       "${if (deviceType != null) " supporting device type $deviceType" else " with a ${platform.productFamily} device type"} was found. " +
       "Install a ${platform.simctlName} simulator runtime (Xcode > Settings > Components), " +
       "or set simsteward.${platform.property}.runtime and simsteward.${platform.property}.deviceType to installed identifiers.",
   )
-  return SimulatorSpec(deviceType ?: supported(best).first(), best["identifier"] as String, xcrun, slimming.slim, slimming.simslim, slimming.profile)
+  return SimulatorSpec(deviceType ?: supported(best).first(), best["identifier"] as String, xcrun, slimming)
 }
