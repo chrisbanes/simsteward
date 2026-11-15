@@ -46,6 +46,57 @@ class RealSimulatorSmokeTest {
     assertEquals(emptyList(), managedSimulators(), "managed simulators remain after the rerun")
   }
 
+  @Test
+  fun failingRealKmpTestReturnsLeaseBeforeTaskCompletion() {
+    assertEquals(emptyList(), managedSimulators(), "managed simulators exist before the run")
+    writeFixture()
+    directory.resolve("lib/src/commonTest/kotlin/SmokeTest.kt").writeText(
+      """
+      import kotlin.test.Test
+      import kotlin.test.assertEquals
+      class SmokeTest {
+        @Test fun deliberateFailure() = assertEquals(42, 41, "deliberate smoke failure")
+      }
+      """.trimIndent(),
+    )
+    directory.resolve("lib/build.gradle.kts").appendText(
+      """
+
+      tasks.named<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>("iosSimulatorArm64Test") {
+        val snapshot = layout.buildDirectory.file("suite-snapshot.txt").get().asFile
+        doFirst {
+          addTestListener(object : TestListener {
+            override fun beforeSuite(suite: TestDescriptor) = Unit
+            override fun beforeTest(testDescriptor: TestDescriptor) = Unit
+            override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) = Unit
+            override fun afterSuite(suite: TestDescriptor, result: TestResult) {
+              if (suite.parent == null) {
+                val process = ProcessBuilder("xcrun", "simctl", "list", "devices").redirectErrorStream(true).start()
+                val output = process.inputStream.bufferedReader().readText()
+                check(process.waitFor() == 0) { output }
+                snapshot.writeText(output)
+              }
+            }
+          })
+        }
+      }
+      """.trimIndent(),
+    )
+    runner().withArguments(":lib:linkDebugTestIosSimulatorArm64", "--no-scan", "--stacktrace").build()
+    val result = runner().buildAndFail()
+    assertEquals(TaskOutcome.FAILED, result.task(task)?.outcome, result.output)
+    val report = directory.resolve("lib/build/test-results/iosSimulatorArm64Test").listFiles { f -> f.extension == "xml" }.orEmpty()
+      .joinToString { it.readText() }
+    assertTrue("deliberateFailure" in report && "deliberate smoke failure" in report && "<failure" in report, report)
+    val lease = Regex("leased managed simulator ([^ ]+) \\(([^)]+)\\) as ([^\\s]+)").find(result.output)
+    assertTrue(lease != null, result.output)
+    val (udid, poolName, taskName) = lease.destructured
+    val snapshot = directory.resolve("lib/build/suite-snapshot.txt").readText()
+    val device = snapshot.lines().single { udid in it }
+    assertTrue("$poolName ($udid)" in device && taskName !in device, device)
+    assertEquals(emptyList(), managedSimulators(), "managed simulators remain after the run")
+  }
+
   private fun runner() = GradleRunner.create()
     .withProjectDir(directory)
     .withTestKitDir(File(System.getProperty("simsteward.testKitDir")))
