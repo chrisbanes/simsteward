@@ -20,10 +20,10 @@ internal data class SimulatorSpec(
   val deviceType: String,
   val runtime: String,
   val xcrun: String,
-  /** Where ownership records live: under the Gradle user home. */
-  val recordsDir: File,
-  val buildRoot: String,
 ) : Serializable
+
+/** Where this build's ownership records live (under the Gradle user home) and which build owns them. */
+internal data class Ownership(val recordsDir: File, val buildRoot: String) : Serializable
 
 /**
  * Holds every pool of managed simulators in the build.
@@ -48,10 +48,18 @@ abstract class LeaseService :
   private val leases = mutableMapOf<String, ManagedSimulator>()
   private val lock = Object()
 
+  /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */
+  internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String): SimulatorSpec =
+    if (runtime != null && deviceType != null) {
+      SimulatorSpec(deviceType, runtime, xcrun)
+    } else {
+      resolveSpec(platform, simctl(xcrun, "list", "-j", "runtimes"), runtime, deviceType, xcrun)
+    }
+
   /** Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name]. */
-  internal fun lease(taskPath: String, name: String, spec: SimulatorSpec) = synchronized(lock) {
+  internal fun lease(taskPath: String, name: String, spec: SimulatorSpec, ownership: Ownership) = synchronized(lock) {
     if (!reaped) {
-      reap(spec.xcrun, spec.recordsDir)
+      reap(spec.xcrun, ownership.recordsDir)
       reaped = true
     }
     val pool = pools.getOrPut(spec) { mutableListOf() }
@@ -59,7 +67,7 @@ abstract class LeaseService :
     while (simulator == null) {
       if (pool.size < MAX_SIMULATORS_PER_POOL) {
         // shortcut: creation holds the lock, so other pools wait for it; fine with one pool.
-        simulator = create(spec).also { pool += it }
+        simulator = create(spec, ownership).also { pool += it }
       } else {
         lock.wait()
         simulator = pool.firstOrNull { it !in leases.values }
@@ -92,14 +100,14 @@ abstract class LeaseService :
     failures.firstOrNull()?.let { first -> throw first.apply { failures.drop(1).forEach(::addSuppressed) } }
   }
 
-  private fun create(spec: SimulatorSpec): ManagedSimulator {
+  private fun create(spec: SimulatorSpec, ownership: Ownership): ManagedSimulator {
     val poolName = "$NAME_PREFIX-${UUID.randomUUID().toString().take(8)}"
     // The record is written first so that an interruption inside `create` leaves a trace by name.
-    val record = spec.recordsDir.resolve("$poolName.properties")
+    val record = ownership.recordsDir.resolve("$poolName.properties")
     val owner = ProcessHandle.current()
     writeRecord(record, mapOf(
       "name" to poolName,
-      "buildRoot" to spec.buildRoot,
+      "buildRoot" to ownership.buildRoot,
       "pid" to owner.pid().toString(),
       "startTime" to owner.info().startInstant().get().toEpochMilli().toString(),
     ))

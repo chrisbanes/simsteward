@@ -14,7 +14,11 @@ import org.gradle.testkit.runner.GradleRunner
  * KGP's own `simctl spawn` uses a hard-coded `/usr/bin/xcrun`, so the fixture stops each
  * simulator test task after simsteward's lease and before KGP's test action.
  */
-class FixtureBuild(val root: File) {
+class FixtureBuild(
+  val root: File,
+  private val pinned: Boolean = true,
+  private val targets: List<String> = listOf("iosSimulatorArm64()"),
+) {
   val commandLog: File = root.resolve("commands.log")
   private val failFile = root.resolve("fail-on")
 
@@ -42,12 +46,11 @@ class FixtureBuild(val root: File) {
       """
       org.gradle.configuration-cache=true
       org.gradle.configuration-cache.problems=fail
-      simsteward.xcrun=${fake("xcrun", XCRUN.replace("@ROOT@", root.absolutePath))}
+      simsteward.xcrun=${fake("xcrun", xcrun())}
       simsteward.simslim=${fake("simslim", SIMSLIM)}
-      simsteward.ios.deviceType=$DEVICE_TYPE
-      simsteward.ios.runtime=$RUNTIME
-      """.trimIndent(),
+      """.trimIndent() + if (pinned) "\nsimsteward.ios.deviceType=$DEVICE_TYPE\nsimsteward.ios.runtime=$RUNTIME\n" else "\n",
     )
+    installRuntimes(RUNTIMES_JSON)
     root.resolve("lib").mkdirs()
     // The fake test binary lets KGP's test task run without compiling Kotlin/Native.
     root.resolve("lib/test.kexe").writeText("")
@@ -62,7 +65,7 @@ class FixtureBuild(val root: File) {
       }
 
       kotlin {
-        iosSimulatorArm64()
+        ${targets.joinToString("\n        ")}
       }
 
       // Registered before simsteward so that simsteward's doFirst runs before this one.
@@ -86,6 +89,11 @@ class FixtureBuild(val root: File) {
   /** Appends Kotlin DSL to the `lib` module's build script. */
   fun appendToLib(script: String) {
     root.resolve("lib/build.gradle.kts").appendText("\n" + script.trimIndent() + "\n")
+  }
+
+  /** Sets what the fake `xcrun simctl list -j runtimes` prints. */
+  fun installRuntimes(json: String) {
+    root.resolve("bin").apply { mkdirs() }.resolve("runtimes.json").writeText(json)
   }
 
   /** Makes the fakes fail every command that starts with [command], such as `simctl create`. */
@@ -151,18 +159,42 @@ class FixtureBuild(val root: File) {
     val RECORDS_DIR = TEST_KIT_DIR.resolve("simsteward/records")
 
     // The create and bootstatus cases snapshot the ownership record as the build owns it.
-    private val XCRUN = """
+    private fun FixtureBuild.xcrun() = """
       case "${'$'}1 ${'$'}2" in
         "simctl create")
-          echo "${'$'}3" > '@ROOT@/pool-name'
-          cp '$RECORDS_DIR'/"${'$'}3.properties" '@ROOT@/record-at-create.properties' 2>/dev/null || true
+          echo "${'$'}3" > '${root.resolve("pool-name").absolutePath}'
+          cp '$RECORDS_DIR'/"${'$'}3.properties" '${root.resolve("record-at-create.properties").absolutePath}' 2>/dev/null || true
           echo "$UDID" ;;
         "simctl bootstatus")
-          cp '$RECORDS_DIR'/"${'$'}(cat '@ROOT@/pool-name')".properties '@ROOT@/record-after-create.properties' 2>/dev/null ;;
-        "simctl list") cat '@ROOT@/devices.txt' 2>/dev/null || true ;;
+          cp '$RECORDS_DIR'/"${'$'}(cat '${root.resolve("pool-name").absolutePath}')".properties '${root.resolve("record-after-create.properties").absolutePath}' 2>/dev/null || true ;;
+        "simctl list")
+          case "${'$'}3 ${'$'}4" in
+            "devices "*) cat '${root.resolve("devices.txt").absolutePath}' 2>/dev/null || true ;;
+            "-j runtimes") cat '${root.resolve("bin/runtimes.json").absolutePath}' ;;
+            "-j devicetypes") cat '${root.resolve("bin/devicetypes.json").absolutePath}' ;;
+          esac ;;
       esac
     """
 
     private const val SIMSLIM = ""
+
+    /** Shaped like real `simctl list -j runtimes`, trimmed to the fields simsteward could read. */
+    fun runtime(platform: String, version: String, family: String, vararg deviceTypes: String, available: Boolean = true) =
+      """
+      {"isAvailable": $available, "version": "$version", "platform": "$platform",
+       "identifier": "com.apple.CoreSimulator.SimRuntime.$platform-${version.replace('.', '-')}",
+       "name": "$platform $version",
+       "supportedDeviceTypes": [${deviceTypes.joinToString { """{"name": "$it", "productFamily": "$family", "identifier": "com.apple.CoreSimulator.SimDeviceType.${it.replace(' ', '-')}"}""" }}]}
+      """.trimIndent()
+
+    fun runtimesJson(vararg runtimes: String) = """{"runtimes": [${runtimes.joinToString()}]}"""
+
+    val RUNTIMES_JSON = runtimesJson(
+      runtime("iOS", "26.4", "iPhone", "iPhone 16"),
+      runtime("iOS", "27.0", "iPhone", "iPhone 17", "iPhone 17 Pro"),
+      runtime("iOS", "28.0", "iPhone", "iPhone 18", available = false),
+      runtime("tvOS", "27.0", "Apple TV", "Apple TV 4K"),
+      runtime("watchOS", "27.0", "Apple Watch", "Apple Watch Series 11"),
+    )
   }
 }

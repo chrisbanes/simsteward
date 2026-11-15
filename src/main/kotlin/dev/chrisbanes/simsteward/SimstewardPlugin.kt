@@ -10,7 +10,6 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.TaskAction
-import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
@@ -19,7 +18,6 @@ import org.gradle.build.event.BuildEventsListenerRegistry
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
-import org.jetbrains.kotlin.konan.target.Family
 
 abstract class SimstewardPlugin @Inject constructor(
   private val buildEvents: BuildEventsListenerRegistry,
@@ -30,8 +28,6 @@ abstract class SimstewardPlugin @Inject constructor(
       buildEvents.onTaskCompletion(leases)
 
       val buildRootHash = sha256(layout.settingsDirectory.asFile.absolutePath).take(8)
-      val deviceType = providers.gradleProperty("simsteward.ios.deviceType")
-      val runtime = providers.gradleProperty("simsteward.ios.runtime")
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
 
       val recordsDir = gradle.gradleUserHomeDir.resolve("simsteward/records")
@@ -48,13 +44,20 @@ abstract class SimstewardPlugin @Inject constructor(
       val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets
       tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
         val kotlinTarget = targets.getByName(checkNotNull(task.targetName)) as KotlinNativeTarget
-        // shortcut: iOS only until tvOS and watchOS get their own specs.
-        if (kotlinTarget.konanTarget.family != Family.IOS) return@configureEach
+        val platform = Platform.of(kotlinTarget.konanTarget.family) ?: return@configureEach
         val name = "$NAME_PREFIX-$buildRootHash${task.path}"
         task.standalone.set(false)
         task.device.set(name)
         task.usesService(leases)
-        task.doFirst(LeaseAction(leases, name, deviceType, runtime, xcrun, recordsDir, buildRoot))
+        task.doFirst(LeaseAction(
+          leases,
+          name,
+          platform,
+          providers.gradleProperty("simsteward.${platform.property}.deviceType"),
+          providers.gradleProperty("simsteward.${platform.property}.runtime"),
+          xcrun,
+          Ownership(recordsDir, buildRoot),
+        ))
       }
     }
   }
@@ -74,25 +77,16 @@ abstract class ReapTask : DefaultTask() {
 private class LeaseAction(
   private val leases: Provider<LeaseService>,
   private val name: String,
+  private val platform: Platform,
   private val deviceType: Provider<String>,
   private val runtime: Provider<String>,
   private val xcrun: Provider<String>,
-  private val recordsDir: File,
-  private val buildRoot: String,
+  private val ownership: Ownership,
 ) : Action<Task> {
   override fun execute(task: Task) {
-    val spec = SimulatorSpec(
-      deviceType = deviceType.orNull ?: throw missingProperty("simsteward.ios.deviceType", "device type"),
-      runtime = runtime.orNull ?: throw missingProperty("simsteward.ios.runtime", "runtime"),
-      xcrun = xcrun.get(),
-      recordsDir = recordsDir,
-      buildRoot = buildRoot,
-    )
-    leases.get().lease(task.path, name, spec)
+    val service = leases.get()
+    service.lease(task.path, name, service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get()), ownership)
   }
-
-  private fun missingProperty(property: String, what: String) =
-    GradleException("Set the Gradle property $property to an installed iOS simulator $what identifier.")
 }
 
 internal const val NAME_PREFIX = "simsteward"
