@@ -174,7 +174,7 @@ class FixtureBuild(
   /** A separate command route with its own listing and snapshots, in the same consumer build. */
   fun installXcrun(name: String, vararg devices: Pair<String, String>): String {
     val listing = root.resolve("devices-$name.txt")
-    listing.writeText(devices.joinToString("\n") { (device, udid) -> "    $device ($udid) (Shutdown)" })
+    listing.writeText("== Devices ==\n" + devices.joinToString("\n") { (device, udid) -> "    $device ($udid) (Shutdown)" })
     return fake(
       name,
       xcrun().replace(root.resolve("devices.txt").absolutePath, listing.absolutePath)
@@ -182,6 +182,24 @@ class FixtureBuild(
         .replace("record-after-create.properties", "record-after-create-$name.properties"),
     )
   }
+
+  /** Sets the explicit project override after plugin application and checks the executable actually wired. */
+  fun localXcrun(module: String, executable: String) {
+    appendTo(module, "extra[\"simsteward.xcrun\"] = \"$executable\"")
+    expectXcrun(module, executable)
+  }
+
+  /** A configuration-time guard: failure cannot run any simulator task or fall back to real xcrun. */
+  fun expectXcrun(module: String, executable: String) = appendTo(
+    module,
+    """
+    afterEvaluate {
+      check(tasks.named("simstewardReap").get().inputs.properties["xcrun"] == "$executable") {
+        "Wired xcrun did not select the expected executable"
+      }
+    }
+    """.trimIndent(),
+  )
 
   /** The `simctl create` commands the fakes saw. */
   fun creates(): List<String> = commands().filter { it.startsWith("xcrun simctl create ") }
@@ -262,6 +280,9 @@ class FixtureBuild(
       case "${'$'}1 ${'$'}2" in
         "simctl create")
           echo "${'$'}3" > '${root.resolve("pool-name").absolutePath}'
+          if [ -f '${root.resolve("collision-on-create").absolutePath}' ]; then
+            cp '${root.resolve("collision-on-create").absolutePath}' '${root.resolve("devices.txt").absolutePath}'
+          fi
           cp '$RECORDS_DIR'/"${'$'}3.properties" '${root.resolve("record-at-create.properties").absolutePath}' 2>/dev/null || true
           # Each create gets its own UDID, the first one being UDID; mkdir claims a number atomically.
           mkdir -p '${root.resolve("udids").absolutePath}'

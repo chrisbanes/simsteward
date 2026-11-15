@@ -39,7 +39,7 @@ abstract class SimstewardPlugin @Inject constructor(
 
       val buildRoot = layout.settingsDirectory.asFile.absolutePath
       val buildRootHash = sha256(buildRoot).take(8)
-      val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
+      val xcrun = objects.property(String::class.java).convention(providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun"))
       val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
 
       val extension = extensions.create("simsteward", SimstewardExtension::class.java)
@@ -70,6 +70,13 @@ abstract class SimstewardPlugin @Inject constructor(
       targets.withType(KotlinNativeTarget::class.java).configureEach { families.put(it.name, it.konanTarget.family) }
       // Deferred so that the project's own `simsteward {}` block has run.
       afterEvaluate {
+        if (extensions.extraProperties.has("simsteward.xcrun")) {
+          val local = extensions.extraProperties.get("simsteward.xcrun")
+          if (local !is String) throw GradleException("Project-local simsteward.xcrun must be a String executable path.")
+          xcrun.set(local)
+        }
+        // Snapshot configuration; task actions must not query mutable project properties.
+        xcrun.finalizeValue()
         if (!extension.enabled.get()) return@afterEvaluate
         tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
           val name = "$NAME_PREFIX-$buildRootHash${task.path}"
@@ -108,7 +115,7 @@ abstract class SimstewardPlugin @Inject constructor(
   }
 }
 
-/** The manual counterpart of the reaping that runs before a build's first lease. */
+/** The manual counterpart of startup reaping for each executable/records-directory pair. */
 internal abstract class ReapTask : DefaultTask() {
   @get:Internal abstract val service: Property<LeaseService>
 

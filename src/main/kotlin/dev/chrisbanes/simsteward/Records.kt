@@ -34,9 +34,10 @@ internal fun readRecord(file: File): Map<String, String> = runCatching {
   Properties().apply { file.reader().use(::load) }.let { p -> p.stringPropertyNames().associateWith { p.getProperty(it) } }
 }.getOrDefault(emptyMap())
 
-/** Null means the observation could not prove which process owns this live PID. */
+/** Independently observed birth times for the process currently occupying a PID. */
 internal data class OwnerProcess(val alive: Boolean, val startTime: Long?, val startSeconds: Long?)
 
+/** Null means the observation could not establish which live process occupies the PID. */
 internal fun ownerIsAlive(startTime: Long, startSeconds: Long?, observe: () -> OwnerProcess): Boolean? = runCatching {
   require(startTime > 0)
   val process = observe()

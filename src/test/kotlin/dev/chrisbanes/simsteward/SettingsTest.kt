@@ -20,6 +20,46 @@ class SettingsTest {
   private val otherType = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
 
   @Test
+  fun projectLocalExecutableWinsOverGlobalAndCommandLineAndManualReapUsesIt() {
+    val build = FixtureBuild(directory)
+    val local = build.installXcrun("xcrun-local")
+    val cli = build.installXcrun("xcrun-cli")
+    build.localXcrun("lib", local)
+    build.build(":lib:simstewardReap", "-Psimsteward.xcrun=$cli")
+    assertEquals(listOf("xcrun-local simctl list devices"), build.commands())
+  }
+
+  @Test
+  fun executableKeepsGlobalCommandLineAndDefaultFallbacksWithoutLocalOverride() {
+    val build = FixtureBuild(directory)
+    build.expectXcrun("lib", directory.resolve("bin/xcrun").absolutePath)
+    build.build(":lib:simstewardReap")
+    assertEquals(listOf("xcrun simctl list devices"), build.commands())
+
+    val cli = FixtureBuild(directory.resolve("cli"))
+    val executable = cli.installXcrun("xcrun-cli")
+    cli.expectXcrun("lib", executable)
+    cli.build(":lib:simstewardReap", "-Psimsteward.xcrun=$executable")
+    assertEquals(listOf("xcrun-cli simctl list devices"), cli.commands())
+
+    val defaults = FixtureBuild(directory.resolve("default"))
+    val properties = defaults.root.resolve("gradle.properties")
+    properties.writeText(properties.readLines().filterNot { it.startsWith("simsteward.xcrun=") }.joinToString("\n"))
+    defaults.expectXcrun("lib", "/usr/bin/xcrun")
+    defaults.build("help") // Inspect configuration only; never execute the real default.
+    assertEquals(emptyList(), defaults.commands())
+  }
+
+  @Test
+  fun nonScalarProjectLocalExecutableFailsDuringConfiguration() {
+    val build = FixtureBuild(directory)
+    build.appendToLib("extra[\"simsteward.xcrun\"] = providers.provider { \"not a scalar\" }")
+    val result = build.buildAndFail("help")
+    assertTrue("Project-local simsteward.xcrun must be a String executable path." in result.output, result.output)
+    assertEquals(emptyList(), build.commands())
+  }
+
+  @Test
   fun propertyAppliesToEveryProjectAndExtensionOverridesIt() {
     val build = FixtureBuild(directory)
     build.addModule("lib2")

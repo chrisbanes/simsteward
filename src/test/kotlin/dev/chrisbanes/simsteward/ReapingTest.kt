@@ -74,10 +74,11 @@ class ReapingTest {
   @Test
   fun recordWithLiveOwnerIsLeftAlone() {
     val build = FixtureBuild(directory)
+    build.addModule("second")
     val record = plant("simsteward-alive001", udid = DEAD_UDID)
     build.listDevices("simsteward-alive001" to DEAD_UDID)
 
-    val result = build.build(task)
+    val result = build.build(task, ":second:iosSimulatorArm64Test", "--parallel", "--max-workers=4", "-Pfixture.holders=2")
 
     assertFalse("xcrun simctl delete $DEAD_UDID" in build.commands())
     assertTrue(record.exists())
@@ -142,19 +143,14 @@ class ReapingTest {
     build.addModule("second")
     val firstXcrun = build.installXcrun("xcrun-first", "simsteward-routeone" to DEAD_UDID)
     val secondXcrun = build.installXcrun("xcrun-second", "simsteward-routetwo" to OTHER_UDID)
-    val properties = build.root.resolve("gradle.properties")
-    properties.writeText(properties.readLines().filterNot { it.startsWith("simsteward.xcrun=") }.joinToString("\n"))
-    build.root.resolve("lib/gradle.properties").writeText("simsteward.xcrun=$firstXcrun\n")
-    build.root.resolve("second/gradle.properties").writeText("simsteward.xcrun=$secondXcrun\n")
-    for ((module, expected) in listOf("lib" to firstXcrun, "second" to secondXcrun)) {
-      build.appendTo(module, "check(providers.gradleProperty(\"simsteward.xcrun\").orNull == \"$expected\") { \"Per-project xcrun provider did not select the fake route\" }")
-    }
+    build.localXcrun("lib", firstXcrun)
+    build.localXcrun("second", secondXcrun)
     val (pid, start) = deadProcess()
     val one = plant("simsteward-routeone", DEAD_UDID, pid, start, firstXcrun)
     val two = plant("simsteward-routetwo", OTHER_UDID, pid, start, secondXcrun)
     // The first route's listing lacks the other orphan: it must retain that record for route two.
-    build.runner(task, ":second:iosSimulatorArm64Test", "-Psimsteward.slim=false", "--max-workers=1")
-      .withGradleVersion("9.9.1").build()
+    val args = arrayOf(task, ":second:iosSimulatorArm64Test", "-Psimsteward.slim=false", "--max-workers=1", "-Dorg.gradle.unsafe.isolated-projects=true", "--rerun-tasks")
+    build.build(*args)
 
     val commands = build.commands()
     for ((label, udid) in listOf("xcrun-first" to DEAD_UDID, "xcrun-second" to OTHER_UDID)) {
@@ -167,6 +163,12 @@ class ReapingTest {
     assertFalse(commands.contains("xcrun-second simctl delete $DEAD_UDID"))
     assertFalse(one.exists())
     assertFalse(two.exists())
+    build.clearCommands()
+    val again = build.build(*args)
+    assertTrue("Reusing configuration cache." in again.output, again.output)
+    for (label in listOf("xcrun-first", "xcrun-second")) {
+      assertEquals(1, build.commands().count { it.startsWith("$label simctl create ") })
+    }
   }
 
   @Test

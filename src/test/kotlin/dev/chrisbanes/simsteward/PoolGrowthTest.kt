@@ -4,6 +4,8 @@
 package dev.chrisbanes.simsteward
 
 import java.io.File
+import java.security.MessageDigest
+import java.util.HexFormat
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -151,6 +153,48 @@ class PoolGrowthTest {
     assertTrue("test :lib:iosSimulatorArm64Test" !in build.commands(), build.commands().toString())
     assertTrue(build.commands().last().startsWith("xcrun simctl delete "), build.commands().toString())
   }
+
+  @Test
+  fun firstLeaseRejectsNameThatAppearsDuringCreationAfterReaping() {
+    val build = FixtureBuild(directory)
+    val name = taskName(build, ":lib:iosSimulatorArm64Test")
+    build.root.resolve("collision-on-create").writeText("== Devices ==\n    $name ($OTHER_UDID) (Shutdown)\n")
+    val result = build.buildAndFail(":lib:iosSimulatorArm64Test", "-Psimsteward.slim=false")
+    val commands = build.commands()
+    assertTrue("Another simulator, $OTHER_UDID, is already named $name" in result.output, result.output)
+    assertEquals(2, commands.count { it == "xcrun simctl list devices" })
+    assertTrue(commands.indexOfFirst { "create" in it } in 1 until commands.indexOfLast { it == "xcrun simctl list devices" }, "$commands")
+    assertTrue(commands.none { it == "test :lib:iosSimulatorArm64Test" || it.endsWith(" $name") }, "$commands")
+    assertEquals("xcrun simctl delete ${FixtureBuild.UDID}", commands.last())
+  }
+
+  @Test
+  fun laterLeaseRejectsNameThatAppearsAfterPreviousTaskReturns() {
+    val build = FixtureBuild(directory)
+    build.addModule("second")
+    val name = taskName(build, ":second:iosSimulatorArm64Test")
+    build.appendToLib(
+      """
+      tasks.named("iosSimulatorArm64Test") {
+        doLast {
+          File("${build.root.resolve("devices.txt")}").writeText("== Devices ==\n    $name ($OTHER_UDID) (Shutdown)\n")
+        }
+      }
+      """.trimIndent(),
+    )
+    build.appendTo("second", "tasks.named(\"iosSimulatorArm64Test\") { mustRunAfter(\":lib:iosSimulatorArm64Test\") }")
+    val result = build.buildAndFail(*tasks("lib", "second"), "--max-workers=1")
+    val commands = build.commands()
+    assertTrue("Another simulator, $OTHER_UDID, is already named $name" in result.output, result.output)
+    assertEquals(1, build.creates().size, "$commands")
+    assertEquals(3, commands.count { it == "xcrun simctl list devices" })
+    assertTrue(commands.indexOf("test :lib:iosSimulatorArm64Test") in 0 until commands.indexOfLast { it == "xcrun simctl list devices" }, "$commands")
+    assertTrue(commands.none { it == "test :second:iosSimulatorArm64Test" || it.endsWith(" $name") }, "$commands")
+    assertEquals("xcrun simctl delete ${FixtureBuild.UDID}", commands.last())
+  }
+
+  private fun taskName(build: FixtureBuild, path: String): String =
+    "simsteward-" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(build.root.canonicalPath.toByteArray())).take(8) + path
 
   @Test
   fun failedTaskReturnsItsLeaseToAWaitingTask() {
