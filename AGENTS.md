@@ -1,3 +1,7 @@
+## Project queue
+
+The GitHub Project binding for `/run-github-project` is `docs/agents/run-github-project.md`.
+
 ## Agent skills
 
 ### Issue tracker
