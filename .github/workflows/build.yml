@@ -31,7 +31,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew test --no-scan ${{ matrix.args }}
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-reports-${{ matrix.name }}
           path: build/reports/tests
@@ -49,7 +49,7 @@ jobs:
       - run: brew install mobai-app/tap/simslim
       - run: ./gradlew smokeTest --no-scan
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: simulator-smoke-reports
           path: build/reports/tests/smokeTest
