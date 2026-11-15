@@ -51,20 +51,16 @@ class FixtureBuild(
       """.trimIndent() + if (pinned) "\nsimsteward.ios.deviceType=$DEVICE_TYPE\nsimsteward.ios.runtime=$RUNTIME\n" else "\n",
     )
     installRuntimes(RUNTIMES_JSON)
-    writeModule("lib")
+    addModule("lib")
   }
 
-  /** Adds another KMP module, [name], with the same targets and fixture test task as `lib`. */
+  /** Adds a KMP module with simsteward applied and a fake test binary, and includes it in settings. */
   fun addModule(name: String) {
-    root.resolve("settings.gradle.kts").appendText("\ninclude(\":$name\")\n")
-    writeModule(name)
-  }
-
-  private fun writeModule(name: String) {
-    val module = root.resolve(name).apply { mkdirs() }
+    if (name != "lib") root.resolve("settings.gradle.kts").appendText("\ninclude(\":$name\")\n")
+    root.resolve(name).mkdirs()
     // The fake test binary lets KGP's test task run without compiling Kotlin/Native.
-    module.resolve("test.kexe").writeText("")
-    module.resolve("build.gradle.kts").writeText(
+    root.resolve("$name/test.kexe").writeText("")
+    root.resolve("$name/build.gradle.kts").writeText(
       """
       import java.io.File
       import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
@@ -100,7 +96,8 @@ class FixtureBuild(
         val awaitWaiter = project.providers.gradleProperty("fixture.awaitWaiter").isPresent
         val arrivals = File("${root.resolve("arrivals").absolutePath}")
         doFirst {
-          println("fixture: ${'$'}path device=${'$'}{device.get()} standalone=${'$'}{standalone.get()}")
+          val deviceName = runCatching { device.get() }.getOrNull()
+          println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
           if (holders > 0) {
             arrivals.mkdirs()
@@ -129,6 +126,12 @@ class FixtureBuild(
 
   /** Appends Kotlin DSL to the `lib` module's build script. */
   fun appendToLib(script: String) = appendTo("lib", script)
+
+  /** Configures the `simsteward {}` extension in [module]; the fixture applies the plugin without type-safe accessors. */
+  fun simsteward(module: String, block: String) = appendTo(
+    module,
+    "extensions.configure<dev.chrisbanes.simsteward.SimstewardExtension>(\"simsteward\") {\n$block\n}",
+  )
 
   /** Appends Kotlin DSL to [module]'s build script. */
   fun appendTo(module: String, script: String) {

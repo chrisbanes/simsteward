@@ -76,10 +76,25 @@ class PoolGrowthTest {
   fun invalidMaxSimulatorsFailsWithClearMessage() {
     val build = FixtureBuild(directory)
 
-    val result = build.buildAndFail(":lib:iosSimulatorArm64Test", "-Psimsteward.maxSimulators=0")
+    val zero = build.buildAndFail(":lib:iosSimulatorArm64Test", "-Psimsteward.maxSimulators=0")
+    val word = build.buildAndFail(":lib:iosSimulatorArm64Test", "-Psimsteward.maxSimulators=two")
 
-    assertTrue("simsteward.maxSimulators must be a whole number of at least 1, but was '0'" in result.output, result.output)
+    assertTrue("maxSimulators must be at least 1, but was 0." in zero.output, zero.output)
+    assertTrue("simsteward.maxSimulators must be a whole number, but was 'two'." in word.output, word.output)
     assertEquals(emptyList(), build.creates())
+  }
+
+  @Test
+  fun extensionMaxSimulatorsOverridesTheProperty() {
+    val build = FixtureBuild(directory)
+    build.addModule("second")
+    build.simsteward("lib", "maxSimulators.set(1)")
+    build.simsteward("second", "maxSimulators.set(1)")
+
+    val result = build.build(*tasks("lib", "second"), *parallel, "-Pfixture.holders=1", "-Pfixture.awaitWaiter")
+
+    assertEquals(1, build.creates().size, build.commands().toString())
+    assertTrue("its pool is at its cap of 1 simulator" in result.output, result.output)
   }
 
   @Test
