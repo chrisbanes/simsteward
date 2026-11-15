@@ -76,12 +76,27 @@ publishing {
 }
 
 tasks.test {
-  useJUnitPlatform()
   // `-Psimsteward.test.gradle=<version> -Psimsteward.test.kgp=<version>` select the fixture versions.
   systemProperty("simsteward.test.gradle", providers.gradleProperty("simsteward.test.gradle").getOrElse(minGradle))
   systemProperty("simsteward.test.kgp", providers.gradleProperty("simsteward.test.kgp").getOrElse(minKgp))
+}
+
+val smokeTest by tasks.registering(Test::class) {
+  group = "verification"
+  description = "Runs the opt-in smoke test against a real slim simulator (needs Xcode and SimSlim)."
+  testClassesDirs = sourceSets.test.get().output.classesDirs
+  classpath = sourceSets.test.get().runtimeClasspath
+  useJUnitPlatform { includeTags("smoke") }
+  testLogging.showStandardStreams = true
+}
+
+tasks.withType<Test>().configureEach {
   dependsOn("publishAllPublicationsToTestRepository")
   systemProperty("simsteward.testRepository", testRepository.get().asFile.absolutePath)
   systemProperty("simsteward.version", version.toString())
   inputs.dir(testRepository)
+}
+
+tasks.test {
+  useJUnitPlatform { excludeTags("smoke") }
 }

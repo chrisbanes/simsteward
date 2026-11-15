@@ -18,6 +18,7 @@ import org.gradle.build.event.BuildEventsListenerRegistry
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
+import org.jetbrains.kotlin.konan.target.Family
 
 abstract class SimstewardPlugin @Inject constructor(
   private val buildEvents: BuildEventsListenerRegistry,
@@ -53,12 +54,13 @@ abstract class SimstewardPlugin @Inject constructor(
       }
 
       val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets
+      // KGP sets a test task's targetName after configureEach callbacks run, so the platform is looked up at execution.
+      val families = objects.mapProperty(String::class.java, Family::class.java)
+      targets.withType(KotlinNativeTarget::class.java).configureEach { families.put(it.name, it.konanTarget.family) }
       // Deferred so that the project's own `simsteward {}` block has run.
       afterEvaluate {
       if (!extension.enabled.get()) return@afterEvaluate
       tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
-        val kotlinTarget = targets.getByName(checkNotNull(task.targetName)) as KotlinNativeTarget
-        val platform = Platform.of(kotlinTarget.konanTarget.family) ?: return@configureEach
         val name = "$NAME_PREFIX-$buildRootHash${task.path}"
         task.standalone.set(false)
         task.device.set(name)
@@ -66,12 +68,8 @@ abstract class SimstewardPlugin @Inject constructor(
         task.doFirst(LeaseAction(
           leases,
           name,
-          platform,
-          extension.of(platform).deviceType,
-          extension.of(platform).runtime,
-          extension.of(platform).profile,
-          extension.slim,
-          extension.maxSimulators,
+          families,
+          extension,
           xcrun,
           simslim,
           Ownership(recordsDir, buildRoot),
@@ -96,23 +94,23 @@ abstract class ReapTask : DefaultTask() {
 private class LeaseAction(
   private val leases: Provider<LeaseService>,
   private val name: String,
-  private val platform: Platform,
-  private val deviceType: Provider<String>,
-  private val runtime: Provider<String>,
-  private val profile: Provider<String>,
-  private val slim: Provider<Boolean>,
-  private val maxSimulators: Provider<Int>,
+  private val families: Provider<Map<String, Family>>,
+  private val extension: SimstewardExtension,
   private val xcrun: Provider<String>,
   private val simslim: Provider<String>,
   private val ownership: Ownership,
 ) : Action<Task> {
   override fun execute(task: Task) {
+    val family = families.get().getValue(checkNotNull((task as KotlinNativeSimulatorTest).targetName))
+    val platform = Platform.of(family) ?: return
     val service = leases.get()
-    val slimming = Slimming(slim.get(), simslim.get(), profile.orNull)
+    val settings = extension.of(platform)
+    val slimming = Slimming(extension.slim.get(), simslim.get(), settings.profile.orNull)
     service.lease(
       task.path,
       name,
-      service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get(), slimming).copy(maxSimulators = maxSimulators.get()),
+      service.resolve(platform, settings.runtime.orNull, settings.deviceType.orNull, xcrun.get(), slimming)
+        .copy(maxSimulators = extension.maxSimulators.get()),
       ownership,
     )
   }
