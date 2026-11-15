@@ -25,7 +25,7 @@ credits.
 3. Push that commit on its own, then tag it `X.Y.Z`.
 4. The `deploy` CI job on `main` publishes to Maven Central and releases automatically. Wait for it
    to succeed. A push runs CI only for its head commit, so pushing the next commit with it would
-   deploy only the snapshot. Release-version builds sign only when a signing key is configured: CI's
-   `deploy` has the keys, local test runs skip signing.
+   deploy only the snapshot. Only `deploy` signs: it sets
+   `signAllPublications`, so local builds publish unsigned.
 5. Create the GitHub release for the tag.
 6. Commit `Prepare next development version`: set `VERSION_NAME` to the next `-SNAPSHOT`, and push.

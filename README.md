@@ -44,7 +44,7 @@ simsteward {
 
 ## Snapshots
 
-Snapshots of `0.1.0-SNAPSHOT` are published to Central Portal Snapshots:
+Snapshots of the next development version are published to Central Portal Snapshots:
 
 ```kotlin
 pluginManagement {

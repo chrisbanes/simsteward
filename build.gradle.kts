@@ -4,7 +4,6 @@
 
 import com.diffplug.spotless.LineEnding
 import org.gradle.api.attributes.plugin.GradlePluginApiVersion
-import org.gradle.plugins.signing.Sign
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
@@ -99,12 +98,6 @@ publishing {
       properties.put("simsteward.minKgp", minKgp)
     }
   }
-}
-
-// Fixtures publish to the test repository without keys; a Central upload without keys fails Central's validation.
-tasks.withType<Sign>().configureEach {
-  val hasSigningKey = providers.gradleProperty("signingInMemoryKey").isPresent
-  onlyIf("a signing key is configured") { hasSigningKey }
 }
 
 val smokeTest by tasks.registering(Test::class) {

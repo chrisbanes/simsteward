@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
 
+env:
+  ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
+  ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
 jobs:
   test:
     name: test (${{ matrix.name }})
@@ -21,11 +27,6 @@ jobs:
           - name: latest
             java: 21
             args: -Psimsteward.test.gradle=9.9.1 -Psimsteward.test.kgp=2.4.21
-    env:
-      ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
-      ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -46,11 +47,6 @@ jobs:
   simulator-smoke:
     # KGP only enables iosSimulatorArm64 tests on Apple silicon.
     runs-on: macos-15
-    env:
-      ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
-      ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -71,11 +67,6 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
-    env:
-      ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
-      ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -87,8 +78,6 @@ jobs:
           cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - run: ./gradlew spotlessCheck metalavaCheckCompatibility --no-scan
-      # Tests publish to the test repository; a release version must not need signing keys there.
-      - run: ./gradlew publishAllPublicationsToTestRepository -PVERSION_NAME=0.0.0 --no-scan
 
   deploy:
     needs: [test, simulator-smoke, lint]
@@ -100,10 +89,8 @@ jobs:
       ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY }}
       ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.GPG_KEY_ID }}
       ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_KEY_PASSWORD }}
-      ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
-      ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      ORG_GRADLE_PROJECT_remoteBuildCachePush: 'true'
+      # Only deploy signs; other builds publish unsigned, including to the test repository.
+      ORG_GRADLE_PROJECT_signAllPublications: 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -113,5 +100,4 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - run: ./gradlew publish --no-scan --no-configuration-cache
