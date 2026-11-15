@@ -4,6 +4,8 @@
 package dev.chrisbanes.simsteward
 
 import java.io.File
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,6 +37,10 @@ class ReapingTest {
     assertTrue(atCreate["pid"]!!.toLong() > 0 && atCreate["startTime"]!!.toLong() > 0)
     assertEquals(null, atCreate["udid"], "UDID is not known before create")
     assertEquals(FixtureBuild.UDID, afterCreate["udid"])
+    assertEquals(build.root.resolve("bin/xcrun").absolutePath, atCreate["xcrun"])
+    assertEquals(atCreate["xcrun"], afterCreate["xcrun"])
+    assertEquals(atCreate["ownerStartTimeSeconds"], afterCreate["ownerStartTimeSeconds"])
+    assertEquals(atCreate.getValue("startTime").toLong() / 1000, atCreate["ownerStartTimeSeconds"]?.toLong())
     assertFalse(record(pool).exists())
   }
 
@@ -130,16 +136,142 @@ class ReapingTest {
     assertFalse(record.exists())
   }
 
+  @Test
+  fun twoProjectExecutablesReapTheirOwnRecordsBeforeTheirFirstCreate() {
+    val build = FixtureBuild(directory)
+    build.addModule("second")
+    val firstXcrun = build.installXcrun("xcrun-first", "simsteward-routeone" to DEAD_UDID)
+    val secondXcrun = build.installXcrun("xcrun-second", "simsteward-routetwo" to OTHER_UDID)
+    val properties = build.root.resolve("gradle.properties")
+    properties.writeText(properties.readLines().filterNot { it.startsWith("simsteward.xcrun=") }.joinToString("\n"))
+    build.root.resolve("lib/gradle.properties").writeText("simsteward.xcrun=$firstXcrun\n")
+    build.root.resolve("second/gradle.properties").writeText("simsteward.xcrun=$secondXcrun\n")
+    for ((module, expected) in listOf("lib" to firstXcrun, "second" to secondXcrun)) {
+      build.appendTo(module, "check(providers.gradleProperty(\"simsteward.xcrun\").orNull == \"$expected\") { \"Per-project xcrun provider did not select the fake route\" }")
+    }
+    val (pid, start) = deadProcess()
+    val one = plant("simsteward-routeone", DEAD_UDID, pid, start, firstXcrun)
+    val two = plant("simsteward-routetwo", OTHER_UDID, pid, start, secondXcrun)
+    // The first route's listing lacks the other orphan: it must retain that record for route two.
+    build.runner(task, ":second:iosSimulatorArm64Test", "-Psimsteward.slim=false", "--max-workers=1")
+      .withGradleVersion("9.9.1").build()
+
+    val commands = build.commands()
+    for ((label, udid) in listOf("xcrun-first" to DEAD_UDID, "xcrun-second" to OTHER_UDID)) {
+      assertTrue(commands.indexOf("$label simctl delete $udid") in 0 until commands.indexOfFirst { it.startsWith("$label simctl create ") }, "$commands")
+      val snapshot = readRecord(build.root.resolve("record-at-create-$label.properties"))
+      assertEquals(build.root.resolve("bin/$label").absolutePath, snapshot["xcrun"])
+      assertEquals(snapshot["xcrun"], readRecord(build.root.resolve("record-after-create-$label.properties"))["xcrun"])
+    }
+    assertFalse(commands.contains("xcrun-first simctl delete $OTHER_UDID"))
+    assertFalse(commands.contains("xcrun-second simctl delete $DEAD_UDID"))
+    assertFalse(one.exists())
+    assertFalse(two.exists())
+  }
+
+  @Test
+  fun failedCreateLeavesPreCreateProvenanceAndFailedDeleteCanBeRetriedManually() {
+    val build = FixtureBuild(directory)
+    build.failOn("simctl create")
+    build.buildAndFail(task)
+    val snapshot = readRecord(build.root.resolve("record-at-create.properties"))
+    val trace = record(snapshot.getValue("name")).also(planted::add)
+    assertEquals(build.root.resolve("bin/xcrun").absolutePath, snapshot["xcrun"])
+    assertEquals(null, snapshot["udid"])
+    assertTrue(trace.exists())
+
+    val (pid, start) = deadProcess()
+    val orphan = plant("simsteward-retrydel", DEAD_UDID, pid, start)
+    build.listDevices("simsteward-retrydel" to DEAD_UDID)
+    build.failOn("simctl delete")
+    build.build(":lib:simstewardReap")
+    assertTrue(orphan.exists())
+    build.root.resolve("fail-on").delete()
+    build.build(":lib:simstewardReap")
+    assertFalse(orphan.exists())
+  }
+
+  @Test
+  fun malformedRequiredIdentityIsRetainedAndInitialListFailureDoesNotCreate() {
+    val build = FixtureBuild(directory)
+    val record = plant("simsteward-invalid1", DEAD_UDID, pid = -1, startTime = 0)
+    build.listDevices("simsteward-invalid1" to DEAD_UDID)
+    build.failOn("simctl list devices")
+    build.buildAndFail(task)
+    assertTrue(record.exists())
+    assertTrue(build.creates().isEmpty())
+    build.root.resolve("fail-on").delete()
+    val result = build.build(task)
+    assertTrue(record.exists())
+    assertTrue("Ignoring unreadable simsteward record $record" in result.output)
+    assertFalse("xcrun simctl delete $DEAD_UDID" in build.commands())
+  }
+
+  @Test
+  fun laterLeaseOfSamePairLeavesNewOrphanUntilManualReap() {
+    val build = FixtureBuild(directory)
+    build.addModule("second")
+    val (pid, start) = deadProcess()
+    val late = record("simsteward-latepair").also(planted::add)
+    build.listDevices("simsteward-latepair" to DEAD_UDID)
+    build.appendToLib(
+      """
+      tasks.named("iosSimulatorArm64Test") {
+        doLast {
+          File("$late").writeText("name=simsteward-latepair\npid=$pid\nstartTime=$start\nudid=$DEAD_UDID\n")
+        }
+      }
+      """.trimIndent(),
+    )
+    build.appendTo("second", "tasks.named(\"iosSimulatorArm64Test\") { mustRunAfter(\":lib:iosSimulatorArm64Test\") }")
+    build.build(task, ":second:iosSimulatorArm64Test", "--max-workers=1")
+    assertTrue(late.exists(), "A later lease must not automatically reap the same pair again")
+    assertFalse("xcrun simctl delete $DEAD_UDID" in build.commands())
+    build.build(":lib:simstewardReap")
+    assertFalse(late.exists())
+    assertTrue("xcrun simctl delete $DEAD_UDID" in build.commands())
+  }
+
+  @Test
+  fun anotherBuildCannotReapAnActivelyHeldLease() {
+    val holder = FixtureBuild(directory.resolve("holder"))
+    val reaper = FixtureBuild(directory.resolve("reaper"))
+    val pending = CompletableFuture.supplyAsync { holder.build(task, "-Pfixture.holdLease", "-Psimsteward.slim=false") }
+    try {
+      val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+      while (!holder.root.resolve("lease-ready").exists() && !pending.isDone) {
+        check(System.nanoTime() < deadline) { "Holder did not reach the lease barrier" }
+        Thread.sleep(10)
+      }
+      assertFalse(pending.isDone, "Lease holder must still be running")
+      val liveRecord = record(holder.poolName())
+      assertTrue(liveRecord.exists())
+      holder.listDevices(holder.poolName() to FixtureBuild.UDID)
+      // Same configured route, so this tests liveness rather than provenance exclusion.
+      reaper.build(":lib:simstewardReap", "-Psimsteward.xcrun=${holder.root.resolve("bin/xcrun")}")
+      assertTrue(liveRecord.exists())
+      assertFalse(holder.commands().any { it == "xcrun simctl delete ${FixtureBuild.UDID}" })
+    } finally {
+      holder.root.resolve("lease-release").writeText("release")
+      pending.get(90, TimeUnit.SECONDS)
+    }
+    assertFalse(record(holder.poolName()).exists())
+    assertEquals("xcrun simctl delete ${FixtureBuild.UDID}", holder.commands().last())
+  }
+
   private fun record(name: String) = FixtureBuild.RECORDS_DIR.resolve("$name.properties")
 
   private fun ownStartTime() = ProcessHandle.current().info().startInstant().get().toEpochMilli()
 
   private fun deadProcess(): Pair<Long, Long> {
-    val process = ProcessBuilder("/usr/bin/true").start()
-    val handle = process.toHandle()
-    val start = handle.info().startInstant().get().toEpochMilli()
-    process.waitFor()
-    return handle.pid() to start
+    val process = ProcessBuilder("/bin/sleep", "60").start()
+    try {
+      val handle = process.toHandle()
+      return handle.pid() to handle.info().startInstant().get().toEpochMilli()
+    } finally {
+      process.destroy()
+      process.waitFor()
+    }
   }
 
   private fun plant(
@@ -147,12 +279,14 @@ class ReapingTest {
     udid: String?,
     pid: Long = ProcessHandle.current().pid(),
     startTime: Long = ownStartTime(),
+    xcrun: String? = null,
   ): File {
     val file = record(name)
     writeRecord(
       file,
       listOfNotNull(
         "name" to name,
+        xcrun?.let { "xcrun" to it },
         udid?.let { "udid" to it },
         "buildRoot" to "/planted",
         "pid" to pid.toString(),
