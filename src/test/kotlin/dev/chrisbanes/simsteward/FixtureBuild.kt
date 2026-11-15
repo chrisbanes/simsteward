@@ -70,11 +70,12 @@ class FixtureBuild(
 
       // Newer KGP reads these swift-import outputs as task inputs; the fixture drops their real producer.
       val swiftImportStubs = tasks.register("swiftImportStubs") {
-        val dir = layout.buildDirectory.dir("kotlin/swiftImportLdDump/iphonesimulator")
+        val dir = layout.buildDirectory.dir("kotlin/swiftImportLdDump")
         outputs.dir(dir)
         doLast {
-          dir.get().asFile.mkdirs()
-          listOf("framework", "library").forEach { dir.get().file("arm64_${'$'}{it}_search_paths").asFile.writeText("/tmp\n") }
+          for (sdk in listOf("iphonesimulator", "appletvsimulator", "watchsimulator")) for (kind in listOf("framework", "library")) {
+            dir.get().file("${'$'}sdk/arm64_${'$'}{kind}_search_paths").asFile.apply { parentFile.mkdirs(); writeText("/tmp\n") }
+          }
         }
       }
 
