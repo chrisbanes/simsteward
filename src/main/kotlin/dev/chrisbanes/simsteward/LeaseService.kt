@@ -58,6 +58,9 @@ internal abstract class LeaseService :
   private val creating = mutableMapOf<SimulatorSpec, Int>()
   private val leases = mutableMapOf<String, ManagedSimulator>()
   private val returning = mutableSetOf<ManagedSimulator>()
+
+  // wait/notifyAll live on java.lang.Object, not kotlin.Any.
+  @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
   private val lock = Object()
 
   /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */

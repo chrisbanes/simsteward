@@ -16,17 +16,29 @@ plugins {
   id("com.diffplug.spotless") version "8.11.0"
 }
 
+// Minimum supported versions, declared in the published metadata and exercised by the CI matrix.
+// Java 17 is our choice, not a dependency's: Gradle 8.14 and KGP still run on Java 8.
+val minJava = 17
+val minGradle = "8.14"
+val minKgp = "2.2.0"
+
 java {
-  sourceCompatibility = JavaVersion.VERSION_17
-  targetCompatibility = JavaVersion.VERSION_17
+  sourceCompatibility = JavaVersion.toVersion(minJava)
+  targetCompatibility = JavaVersion.toVersion(minJava)
 }
 
 kotlin {
   compilerOptions {
-    jvmTarget = JvmTarget.JVM_17
+    jvmTarget = JvmTarget.fromTarget(minJava.toString())
     // Gradle 8.14 embeds Kotlin 2.0, so its build scripts must be able to read our metadata.
     apiVersion = KotlinVersion.KOTLIN_2_0
     languageVersion = KotlinVersion.KOTLIN_2_0
+    freeCompilerArgs.addAll(
+      // 2.0 is deprecated but deliberate (see above), so silence the warning.
+      "-Xsuppress-version-warnings",
+      // Compile against Java 17's API even on a newer build JDK, so newer JDK methods can't leak in.
+      "-Xjdk-release=$minJava",
+    )
   }
 }
 
@@ -71,10 +83,6 @@ gradlePlugin {
 
 // Fixtures resolve the plugin from this repository next to real KGP, as consumers do (ADR 0002).
 val testRepository = layout.buildDirectory.dir("test-repository")
-// Minimum supported versions, declared in the published metadata and exercised by the CI matrix.
-val minGradle = "8.14"
-val minKgp = "2.2.0"
-
 // Gradle's plugin resolution picks the variant by this attribute, so 8.14 is the declared minimum.
 listOf("apiElements", "runtimeElements").forEach { name ->
   configurations.named(name) {
@@ -94,13 +102,14 @@ publishing {
   }
   publications.withType<MavenPublication>().configureEach {
     pom {
+      properties.put("simsteward.minJava", minJava.toString())
       properties.put("simsteward.minGradle", minGradle)
       properties.put("simsteward.minKgp", minKgp)
     }
   }
 }
 
-val smokeTest by tasks.registering(Test::class) {
+tasks.register<Test>("smokeTest") {
   group = "verification"
   description = "Runs the opt-in smoke test against a real slim simulator (needs Xcode and SimSlim)."
   testClassesDirs = sourceSets.test.get().output.classesDirs
