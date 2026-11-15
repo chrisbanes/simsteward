@@ -1,6 +1,7 @@
 package dev.chrisbanes.simsteward
 
 import java.security.MessageDigest
+import java.util.HexFormat
 import javax.inject.Inject
 import org.gradle.api.Action
 import org.gradle.api.DefaultTask
@@ -31,7 +32,8 @@ abstract class SimstewardPlugin @Inject constructor(
       val leases = gradle.sharedServices.registerIfAbsent("simsteward", LeaseService::class.java) {}
       buildEvents.onTaskCompletion(leases)
 
-      val buildRootHash = sha256(layout.settingsDirectory.asFile.absolutePath).take(8)
+      val buildRoot = layout.settingsDirectory.asFile.absolutePath
+      val buildRootHash = sha256(buildRoot).take(8)
       val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
       val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
 
@@ -46,7 +48,6 @@ abstract class SimstewardPlugin @Inject constructor(
       }
 
       val recordsDir = gradle.gradleUserHomeDir.resolve("simsteward/records")
-      val buildRoot = layout.settingsDirectory.asFile.absolutePath
       tasks.register("simstewardReap", ReapTask::class.java) {
         it.group = "verification"
         it.description = "Deletes managed simulators whose owning build is gone."
@@ -148,4 +149,4 @@ private fun checkMaxSimulators(value: Int): Int =
 internal const val NAME_PREFIX = "simsteward"
 
 private fun sha256(value: String): String =
-  MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+  HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.toByteArray()))
