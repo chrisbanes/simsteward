@@ -7,10 +7,12 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.provider.Provider
+import org.gradle.api.provider.ProviderFactory
 import org.gradle.build.event.BuildEventsListenerRegistry
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
+import org.jetbrains.kotlin.konan.target.Family
 
 abstract class SimstewardPlugin @Inject constructor(
   private val buildEvents: BuildEventsListenerRegistry,
@@ -25,10 +27,11 @@ abstract class SimstewardPlugin @Inject constructor(
       val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
       val slim = providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(true)
 
-      val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets
+      // KGP sets a test task's targetName after configureEach callbacks run, so the platform is looked up at execution.
+      val families = objects.mapProperty(String::class.java, Family::class.java)
+      extensions.getByType(KotlinMultiplatformExtension::class.java).targets.withType(KotlinNativeTarget::class.java)
+        .configureEach { families.put(it.name, it.konanTarget.family) }
       tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
-        val kotlinTarget = targets.getByName(checkNotNull(task.targetName)) as KotlinNativeTarget
-        val platform = Platform.of(kotlinTarget.konanTarget.family) ?: return@configureEach
         val name = "$NAME_PREFIX-$buildRootHash${task.path}"
         task.standalone.set(false)
         task.device.set(name)
@@ -36,13 +39,11 @@ abstract class SimstewardPlugin @Inject constructor(
         task.doFirst(LeaseAction(
           leases,
           name,
-          platform,
-          providers.gradleProperty("simsteward.${platform.property}.deviceType"),
-          providers.gradleProperty("simsteward.${platform.property}.runtime"),
+          families,
+          providers,
           xcrun,
           simslim,
           slim,
-          providers.gradleProperty("simsteward.${platform.property}.profile"),
         ))
       }
     }
@@ -53,18 +54,19 @@ abstract class SimstewardPlugin @Inject constructor(
 private class LeaseAction(
   private val leases: Provider<LeaseService>,
   private val name: String,
-  private val platform: Platform,
-  private val deviceType: Provider<String>,
-  private val runtime: Provider<String>,
+  private val families: Provider<Map<String, Family>>,
+  private val providers: ProviderFactory,
   private val xcrun: Provider<String>,
   private val simslim: Provider<String>,
   private val slim: Provider<Boolean>,
-  private val profile: Provider<String>,
 ) : Action<Task> {
   override fun execute(task: Task) {
+    val family = families.get().getValue(checkNotNull((task as KotlinNativeSimulatorTest).targetName))
+    val platform = Platform.of(family) ?: return
     val service = leases.get()
-    val slimming = Slimming(slim.get(), simslim.get(), profile.orNull)
-    service.lease(task.path, name, service.resolve(platform, runtime.orNull, deviceType.orNull, xcrun.get(), slimming))
+    fun property(key: String) = providers.gradleProperty("simsteward.${platform.property}.$key").orNull
+    val slimming = Slimming(slim.get(), simslim.get(), property("profile"))
+    service.lease(task.path, name, service.resolve(platform, property("runtime"), property("deviceType"), xcrun.get(), slimming))
   }
 }
 
