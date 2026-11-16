@@ -81,7 +81,7 @@ A relative `profile` path resolves against the build's root directory when it is
 
 ### Pinning
 
-When the device type or runtime is not pinned, simsteward picks the newest installed runtime for the platform and a device type that runtime supports. Pin both to keep a test task on a fixed simulator, whatever Xcode installs.
+When the device type or runtime is not pinned, simsteward picks the newest installed runtime for the platform and a device type that runtime supports. Pin both by identifier to keep a test task on a fixed simulator, whatever Xcode installs.
 
 An unpinned task is not up to date once the pick changes, so installing a newer runtime reruns its tests on the next build.
 
