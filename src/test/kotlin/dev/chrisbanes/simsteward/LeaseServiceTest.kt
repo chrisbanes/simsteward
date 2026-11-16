@@ -4,6 +4,7 @@
 package dev.chrisbanes.simsteward
 
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -14,6 +15,39 @@ import org.junit.jupiter.api.io.TempDir
 
 class LeaseServiceTest {
   @TempDir lateinit var directory: File
+
+  @Test
+  fun waitingObservationIsExactAndClearedOnInterruption() {
+    withService { service, spec ->
+      val ownership = Ownership(directory.resolve("records"), "test")
+      service.lease(":holder", "holder", spec, ownership, 1)
+      val failure = AtomicReference<Throwable>()
+      val waiter = Thread {
+        try {
+          service.lease(":waiter", "waiter", spec, ownership, 1)
+        } catch (e: Throwable) {
+          failure.set(e)
+        }
+      }
+      try {
+        assertFalse(service.isWaitingForLease(setOf(":waiter")))
+        waiter.start()
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (!service.isWaitingForLease(setOf(":waiter")) && System.nanoTime() < deadline) Thread.yield()
+        assertTrue(service.isWaitingForLease(setOf(":waiter")))
+        assertFalse(service.isWaitingForLease(setOf(":other")))
+        waiter.interrupt()
+        waiter.join(10_000)
+        assertFalse(waiter.isAlive)
+        assertTrue(failure.get() is InterruptedException)
+        assertFalse(service.isWaitingForLease(setOf(":waiter")))
+      } finally {
+        waiter.interrupt()
+        waiter.join(10_000)
+        service.release(":holder")
+      }
+    }
+  }
 
   @Test
   fun startupIncludesRecordsDirectoryAndNormalizesEquivalentPathsButManualReapAlwaysRuns() {

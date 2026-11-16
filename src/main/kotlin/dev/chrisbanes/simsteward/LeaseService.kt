@@ -66,6 +66,7 @@ internal abstract class LeaseService :
   private val creating = mutableMapOf<SimulatorSpec, Int>()
   private val leases = mutableMapOf<String, ManagedSimulator>()
   private val returning = mutableSetOf<ManagedSimulator>()
+  private val waitingByTask = mutableMapOf<String, SimulatorSpec>()
 
   // wait/notifyAll live on java.lang.Object, not kotlin.Any.
   @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
@@ -115,13 +116,22 @@ internal abstract class LeaseService :
           val simulators = if (maxSimulators == 1) "simulator" else "simulators"
           logger.lifecycle("simsteward: $taskPath is waiting for a returned lease: its pool is at its cap of $maxSimulators $simulators")
         }
-        lock.wait()
+        waitingByTask[taskPath] = spec
+        try {
+          lock.wait()
+        } finally {
+          waitingByTask.remove(taskPath)
+        }
       }
       idle()?.also { leases[taskPath] = it } ?: run {
         creating.merge(spec, 1, Int::plus)
         null
       }
     }
+
+  fun isWaitingForLease(taskPaths: Set<String>): Boolean = synchronized(lock) {
+    taskPaths.any { it in waitingByTask }
+  }
 
   /** `simctl` silently picks one of several same-named simulators (ADR 0001). */
   private fun checkNameIsFree(simulator: ManagedSimulator, name: String) {
@@ -183,6 +193,7 @@ internal abstract class LeaseService :
     creating.clear()
     leases.clear()
     returning.clear()
+    waitingByTask.clear()
     reaped.clear()
     failures.firstOrNull()?.let { first -> throw first.apply { failures.drop(1).forEach(::addSuppressed) } }
   }
