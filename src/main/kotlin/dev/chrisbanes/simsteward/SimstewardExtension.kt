@@ -15,7 +15,7 @@ abstract class SimstewardExtension {
   /** `simsteward.enabled`, default true. False leaves this project's test tasks as KGP configures them. */
   abstract val enabled: Property<Boolean>
 
-  /** `simsteward.slim`, default true. */
+  /** `simsteward.slim`, default false: slimming needs SimSlim, so it is opt-in. */
   abstract val slim: Property<Boolean>
 
   /**

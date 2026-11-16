@@ -41,9 +41,9 @@ for the intended up-to-date behavior for unpinned values. During the up-to-date 
 task-local state from the last successful execution. A changed identifier or a
 resolution failure causes the task to run; fully pinned tasks need no listing.
 
-The managed simulator is slim by default. Simsteward runs `simslim on` and
-`simslim verify` with the optional profile before leasing it. With slimming
-disabled, it boots the simulator with `simctl bootstatus`. A slimming failure
+The managed simulator is stock by default; slimming is opt-in. With slimming
+enabled, simsteward runs `simslim on` and `simslim verify` with the optional
+profile before leasing it. With slimming disabled, it boots the simulator with `simctl bootstatus`. A slimming failure
 fails the task setup; simsteward does not fall back to a stock simulator.
 
 ## Pools and recovery
@@ -53,22 +53,26 @@ A pool grows when no managed simulator is idle, up to `maxSimulators` (default
 outside the lock, and in-flight creates count towards the cap. A returning
 simulator stays unavailable until its rename back completes. The task releases
 on success via `doLast` and on a root-suite failure via a listener installed at
-execution; task completion events provide an idempotent backstop. Matching
-completion event paths across included builds has not been verified.
+execution; task completion events provide an idempotent backstop. Leases and
+staged state are keyed by the task's build-tree path, because completion events
+name an included build's task as `:<build>:<project>:<task>`, not `task.path`.
 
 Before the first lease for each distinct configured `xcrun` and absolute normalized
 records directory, the service reaps recorded orphans. `simstewardReap` always
-runs an explicit reap. A project can set `extra["simsteward.xcrun"]` to a String
-executable path; this overrides the build-wide property (including `-P`) and is
-snapshotted after project evaluation. Without a local override, the build-wide
-property or `/usr/bin/xcrun` default applies. Other property paths are unchanged.
+runs an explicit reap. `xcrun` comes only from the build-wide `simsteward.xcrun`
+property (including `-P`), defaulting to `/usr/bin/xcrun`; there is no
+per-project override.
 
 An ownership record is written atomically before creation, then updated with
 the UDID. New records retain the configured executable; another executable's
-reap skips them even when its listing lacks that simulator. Legacy records
+reap skips them even when its listing lacks that simulator, and warns with the
+`-Psimsteward.xcrun` that would reap them once their owner is gone. Legacy records
 have no executable provenance and retain best-effort routing. The record's
 executable is never itself executed. A failed delete leaves its record for
 recovery. Unrecorded simulators with the prefix are reported, not deleted.
+Records owned by the current daemon but not created by this build are left alone
+with a warning to stop the daemon and reap; an included build in the same daemon
+may still be using them.
 
 Owner identity uses the PID and Java process birth time. When available and
 consistent with Java's timestamp, a record also stores independently read kernel

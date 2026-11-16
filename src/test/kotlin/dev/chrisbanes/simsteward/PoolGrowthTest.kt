@@ -207,7 +207,7 @@ class PoolGrowthTest {
 
     assertTrue(
       "Another simulator, $OTHER_UDID, is already named $device, so simctl could pick either one. " +
-        "Delete or rename that simulator." in result.output,
+        "If another build of this checkout is running this task, wait for it to finish; otherwise delete or rename that simulator." in result.output,
       result.output,
     )
     assertTrue("test :lib:iosSimulatorArm64Test" !in build.commands(), build.commands().toString())
@@ -219,7 +219,7 @@ class PoolGrowthTest {
     val build = FixtureBuild(directory)
     val name = taskName(build, ":lib:iosSimulatorArm64Test")
     build.root.resolve("collision-on-create").writeText("== Devices ==\n    $name ($OTHER_UDID) (Shutdown)\n")
-    val result = build.buildAndFail(":lib:iosSimulatorArm64Test", "-Psimsteward.slim=false")
+    val result = build.buildAndFail(":lib:iosSimulatorArm64Test")
     val commands = build.commands()
     assertTrue("Another simulator, $OTHER_UDID, is already named $name" in result.output, result.output)
     assertEquals(2, commands.count { it == "xcrun simctl list devices" })

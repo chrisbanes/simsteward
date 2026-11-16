@@ -45,13 +45,11 @@ internal fun resolveSpec(
     .filter { deviceType?.let { pinned -> it["identifier"] == pinned } ?: (it["productFamily"] == platform.productFamily) }
     .map { it["identifier"] as String }
 
-  fun safe(value: Any?): String = (value as? String ?: "not reported")
-    .flatMap { if (it.isISOControl()) "\\u%04x".format(it.code).toList() else listOf(it) }.joinToString("").take(160)
   fun version(r: Map<*, *>): List<Int> {
     val raw = r["version"] as? String
     val parts = raw?.split('.')
     if (parts == null || parts.any { it.isEmpty() || it.any { c -> c !in '0'..'9' } || it.toIntOrNull() == null }) {
-      throw GradleException("Invalid runtime version '${safe(raw)}' for '${safe(r["identifier"])}'; expected dotted numeric components.")
+      throw GradleException("Invalid runtime version '$raw' for '${r["identifier"]}'; expected dotted numeric components.")
     }
     return parts.map { it.toInt() }
   }
@@ -68,15 +66,12 @@ internal fun resolveSpec(
     val byId = top.groupBy { it.first["identifier"] as String }
     if (byId.size > 1) {
       val ids = byId.keys.sorted()
-      val details = ids.take(5).joinToString("; ") { id ->
-        val builds = byId.getValue(id).map { (it.first["buildversion"] as? String) ?: "not reported" }.distinct().sorted()
-        "${safe(id)}: ${builds.take(3).joinToString(", ") { safe(it) }}" +
-          if (builds.size > 3) " (+${builds.size - 3} builds omitted)" else ""
+      val details = ids.joinToString("; ") { id ->
+        "$id: " + byId.getValue(id).map { (it.first["buildversion"] as? String) ?: "not reported" }.distinct().sorted().joinToString(", ")
       }
-      val omitted = if (ids.size > 5) "; +${ids.size - 5} identifiers omitted" else ""
       throw GradleException(
-        "Multiple ${platform.simctlName} runtime identifiers share greatest version ${safe(greatest!!.joinToString("."))}: " +
-          "$details$omitted. Set simsteward.${platform.property}.runtime=${safe(ids.first())} in gradle.properties; " +
+        "Multiple ${platform.simctlName} runtime identifiers share greatest version ${greatest!!.joinToString(".")}: " +
+          "$details. Set simsteward.${platform.property}.runtime=${ids.first()} in gradle.properties; " +
           "this pins an identifier, not a build.",
       )
     }

@@ -113,7 +113,7 @@ class RealSimulatorSmokeTest {
 
   private fun writeFixture() {
     directory.resolve("settings.gradle.kts").writeText(FixtureBuild.settings("smoke") + "\ninclude(\":lib\")\n")
-    directory.resolve("gradle.properties").writeText("org.gradle.configuration-cache=true\norg.gradle.jvmargs=-Xmx2g\n")
+    directory.resolve("gradle.properties").writeText("org.gradle.configuration-cache=true\norg.gradle.jvmargs=-Xmx2g\nsimsteward.slim=true\n")
     directory.resolve("lib/src/commonTest/kotlin").mkdirs()
     directory.resolve("lib/src/commonTest/kotlin/SmokeTest.kt").writeText(
       """

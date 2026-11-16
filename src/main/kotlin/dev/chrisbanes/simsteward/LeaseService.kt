@@ -138,7 +138,7 @@ internal abstract class LeaseService :
     val (_, otherUdid) = listDevices(simulator.xcrun).firstOrNull { (n, udid) -> n == name && udid != simulator.udid } ?: return
     throw GradleException(
       "Another simulator, $otherUdid, is already named $name, so simctl could pick either one. " +
-        "Delete or rename that simulator.",
+        "If another build of this checkout is running this task, wait for it to finish; otherwise delete or rename that simulator.",
     )
   }
 
@@ -218,8 +218,8 @@ internal abstract class LeaseService :
     if (slimming.slim) {
       // `simslim on` leaves the simulator booted; there is no fallback to stock if it fails.
       val profile = listOfNotNull(slimming.profile?.let { "--profile" }, slimming.profile)
-      run(listOf(slimming.simslim, "on", udid) + profile)
-      run(listOf(slimming.simslim, "verify", udid) + profile)
+      run(listOf(slimming.simslim, "on", udid) + profile, SIMSLIM_MISSING)
+      run(listOf(slimming.simslim, "verify", udid) + profile, SIMSLIM_MISSING)
     } else {
       // Stock simulators must be booted: KGP needs a booted device when standalone is false.
       simctl(spec.xcrun, "bootstatus", udid, "-b")
@@ -253,13 +253,29 @@ internal abstract class LeaseService :
         file to record
       }
     }
-    records.filter { (_, record) -> record["xcrun"] == null || record["xcrun"] == xcrun }
+    fun alive(record: Map<String, String>): Boolean? {
+      val pid = record.getValue("pid").toLong()
+      val start = record.getValue("startTime").toLong()
+      val seconds = record["ownerStartTimeSeconds"]?.toLongOrNull()?.takeIf { it > 0 && it == start / 1000 }
+      return ownerIsAlive(start, seconds) { observe(pid, seconds) }
+    }
+    val (routed, otherRoutes) = records.partition { (_, record) -> record["xcrun"] == null || record["xcrun"] == xcrun }
+    otherRoutes.filter { (_, record) -> alive(record) == false }.forEach { (file, record) ->
+      logger.warn("Simsteward record $file belongs to a build that is gone but used xcrun ${record["xcrun"]}; run simstewardReap with -Psimsteward.xcrun=${record["xcrun"]}.")
+    }
+    val self = ProcessHandle.current()
+    val selfStart = self.info().startInstant().orElse(null)?.toEpochMilli()?.toString()
+    val createdNames = created.map { it.poolName }.toSet()
+    routed
       .filterNot { (file, record) ->
-        val pid = record.getValue("pid").toLong()
-        val start = record.getValue("startTime").toLong()
-        val seconds = record["ownerStartTimeSeconds"]?.toLongOrNull()?.takeIf { it > 0 && it == start / 1000 }
-        val alive = ownerIsAlive(start, seconds) { observe(pid, seconds) }
+        val alive = alive(record)
         if (alive == null) logger.warn("Cannot establish owner identity for simsteward record $file; leaving it alone.")
+        if (alive == true && record["pid"] == self.pid().toString() && record["startTime"] == selfStart && record["name"] !in createdNames) {
+          logger.warn(
+            "Simsteward record $file belongs to this Gradle daemon, so it is left alone. " +
+              "If no build in this daemon is using it, stop the daemon with `./gradlew --stop` and run simstewardReap.",
+          )
+        }
         alive != false
       }
       .forEach { (file, record) ->
@@ -289,14 +305,20 @@ internal abstract class LeaseService :
 
   private fun simctl(xcrun: String, vararg arguments: String): String = run(listOf(xcrun, "simctl", *arguments))
 
-  private fun run(command: List<String>): String {
+  /** [missing] tells the user how to fix an executable that cannot be started. */
+  private fun run(command: List<String>, missing: String = XCRUN_MISSING): String {
     val output = ByteArrayOutputStream()
     val errors = ByteArrayOutputStream()
-    val result = exec.exec {
-      it.commandLine(command)
-      it.standardOutput = output
-      it.errorOutput = errors
-      it.isIgnoreExitValue = true
+    val result = try {
+      exec.exec {
+        it.commandLine(command)
+        it.standardOutput = output
+        it.errorOutput = errors
+        it.isIgnoreExitValue = true
+      }
+    } catch (failure: Exception) {
+      // With isIgnoreExitValue, exec only throws when the process cannot start, e.g. the executable is not on the daemon's PATH.
+      throw GradleException("Could not start ${command.first()}. $missing", failure)
     }
     if (result.exitValue != 0) {
       val stderr = errors.toString(Charsets.UTF_8).lines().takeLast(STDERR_TAIL_LINES).joinToString("\n").trim()
@@ -307,6 +329,9 @@ internal abstract class LeaseService :
 
   private companion object {
     const val STDERR_TAIL_LINES = 20
+    const val XCRUN_MISSING = "Set simsteward.xcrun to the full path of xcrun."
+    const val SIMSLIM_MISSING = "Install SimSlim (brew install mobai-app/tap/simslim), set simsteward.simslim to its full path, " +
+      "or turn slimming off."
     val DEVICE_LINE = Regex("""^\s+(.+) \(([0-9A-Fa-f-]{36})\) \(.*""")
     val logger = Logging.getLogger(LeaseService::class.java)
   }

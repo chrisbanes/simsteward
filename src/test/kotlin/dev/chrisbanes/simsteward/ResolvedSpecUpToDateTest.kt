@@ -235,7 +235,7 @@ class ResolvedSpecUpToDateTest {
   @Test fun sharedSuccessfulResolutionUsesOneListing() {
     val build = FixtureBuild(directory, pinned = false)
     build.addModule("lib2")
-    build.simsteward("lib2", "slim.set(false)")
+    build.simsteward("lib2", "slim.set(true)")
     val second = ":lib2:iosSimulatorArm64Test"
     val first = build.build(task, second, "--max-workers=1")
     assertEquals(TaskOutcome.SUCCESS, first.task(task)?.outcome)
@@ -248,20 +248,29 @@ class ResolvedSpecUpToDateTest {
     assertEquals(listOf("xcrun simctl list -j runtimes"), build.commands())
   }
 
-  @Test fun distinctRoutesAndPinsResolveSeparately() {
+  @Test fun distinctPinsResolveSeparately() {
     val build = FixtureBuild(directory, pinned = false)
     build.addModule("lib2")
-    val route = build.installXcrun("xcrun-other")
-    build.localXcrun("lib2", route)
     build.simsteward("lib2", "ios { runtime.set(\"${FixtureBuild.RUNTIME}\") }")
     val second = ":lib2:iosSimulatorArm64Test"
     val result = build.build(task, second, "--max-workers=1")
     assertEquals(TaskOutcome.SUCCESS, result.task(task)?.outcome)
     assertEquals(TaskOutcome.SUCCESS, result.task(second)?.outcome)
-    assertEquals(1, build.commands().count { it == "xcrun simctl list -j runtimes" })
-    assertEquals(1, build.commands().count { it == "xcrun-other simctl list -j runtimes" })
-    assertTrue(build.commands().any { it.startsWith("xcrun-other simctl create ") && it.endsWith(FixtureBuild.RUNTIME) })
+    assertEquals(2, build.commands().count { it == "xcrun simctl list -j runtimes" })
     assertTrue(build.creates().single().endsWith(FixtureBuild.RUNTIME))
+  }
+
+  @Test fun includedBuildKeepsResolvedState() {
+    val build = FixtureBuild(directory.resolve("fixture"), pinned = false)
+    directory.resolve("settings.gradle.kts").writeText(FixtureBuild.settings("outer") + "\nincludeBuild(\"fixture\")\n")
+    build.root.resolve("gradle.properties").copyTo(directory.resolve("gradle.properties"))
+    val included = ":fixture$task"
+    fun run() = build.runner(included).withProjectDir(directory).build()
+    run()
+    assertTrue(state(build).exists(), "The finish event must find the included task's staged state")
+    build.clearCommands()
+    run()
+    assertEquals(listOf("xcrun simctl list -j runtimes"), build.commands())
   }
 
   @Test fun parallelTasksShareResolution() {

@@ -16,7 +16,7 @@ _Avoid_: Target, OS
 A managed simulator whose unneeded background services SimSlim has disabled according to a profile.
 
 **Stock**:
-A simulator with every background service running. A managed simulator stays stock when slimming is turned off.
+A simulator with every background service running. A managed simulator stays stock unless slimming is turned on.
 _Avoid_: Plain, normal, unslimmed
 
 **Profile**:

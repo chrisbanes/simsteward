@@ -223,33 +223,16 @@ class PlatformSpecTest {
   }
 
   @Test
-  fun ambiguityGuidanceIsPlatformSpecificAndBounded() {
-    val dangerous = "x".repeat(170) + "\nline"
-    val boundedRows = listOf(row("a", "27.2", dangerous), row("a", "27.2", dangerous), row("b", "27.2", "control\nvalue"), row("low", "1.0"))
-    val boundedMessages = listOf(false, true).map { reverse ->
-      val build = fixture("unsafe-$reverse", if (reverse) boundedRows.reversed() else boundedRows)
-      val output = build.buildAndFail(":lib:iosSimulatorArm64Test").output
-      assertEquals(emptyList(), creates(build))
-      output.lineSequence().first { "Multiple iOS runtime identifiers share" in it }.trim()
-    }
-    assertEquals(boundedMessages.first(), boundedMessages.last())
-    assertTrue("control\\u000avalue" in boundedMessages.first())
-    assertTrue("x".repeat(161) !in boundedMessages.first())
-    assertTrue("builds omitted" !in boundedMessages.first())
+  fun ambiguityGuidanceIsPlatformSpecific() {
     val missing = fixture("missing-build", listOf(row("a", "27.2"), row("b", "27.2", 42)))
     assertTrue("not reported" in missing.buildAndFail(":lib:iosSimulatorArm64Test").output)
     for ((platform, family, property) in listOf(Triple("iOS", "iPhone", "ios"), Triple("tvOS", "Apple TV", "tvos"), Triple("watchOS", "Apple Watch", "watchos"))) {
-      val rows = (0..5).flatMap { id -> (0..3).map { build -> row("id$id", "27.2", if (build == 0) null else "build$build", platform, family) } }
-      val messages = mutableListOf<String>()
-      for (reverse in listOf(false, true)) {
-        val fixture = fixture("bounded-$property-$reverse", if (reverse) rows.reversed() else rows, "${property}SimulatorArm64()")
-        val output = fixture.buildAndFail(":lib:${property}SimulatorArm64Test").output
-        val message = output.lineSequence().first { "Multiple $platform runtime identifiers share" in it }.trim()
-        for (text in listOf("simsteward.$property.runtime", "+1 identifiers omitted", "+1 builds omitted")) assertTrue(text in message, message)
-        assertEquals(emptyList(), creates(fixture))
-        messages += message
-      }
-      assertEquals(messages.first(), messages.last())
+      val rows = listOf(row("a", "27.2", "build1", platform, family), row("b", "27.2", "build2", platform, family))
+      val fixture = fixture("platform-$property", rows, "${property}SimulatorArm64()")
+      val output = fixture.buildAndFail(":lib:${property}SimulatorArm64Test").output
+      val message = output.lineSequence().first { "Multiple $platform runtime identifiers share" in it }.trim()
+      assertTrue("simsteward.$property.runtime=a" in message, message)
+      assertEquals(emptyList(), creates(fixture))
     }
   }
 
