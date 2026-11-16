@@ -96,9 +96,10 @@ fixtures exercise the configured Gradle and KGP compatibility matrix, as
 consumers do. This follows the classloader constraint behind
 [ADR 0002](../adr/0002-project-plugin.md).
 
-The fixture replaces each simulator test action with a `doFirst` action
-registered before simsteward is applied. Gradle prepends later `doFirst`
-actions, so simsteward acquires the lease first. A passing fixture run records
+The fixture applies simsteward after configuring targets, then replaces each
+simulator test action with a `doFirst` action. Simsteward registers its lease
+action after evaluation; Gradle prepends that later `doFirst`, so the lease is
+acquired first. A passing fixture run records
 the task inputs and action without invoking KGP's real simulator work; a
 failing run reports the root test suite to task listeners before throwing, so
 release-on-failure behavior is exercised too.
@@ -120,11 +121,16 @@ serialization. Kotlin DSL scripts that use `File` should import
 
 The build assigns a separate TestKit directory to each test task and checkout;
 fixtures within that task share its Gradle user home and ownership records.
-Tests that create records must use distinct names and clean them up. Parallel lease tests use barriers that wait for observable
-arrivals and a waiting lease request, not sleeps as a timing guarantee. Keep
-blocking fixture waits inside simsteward's package when detecting a waiting
-thread, and latch the barrier once it opens so a returned lease cannot make
-other holders miss it. Use a single worker for tests that require sequential
+Tests that create records must use distinct names and clean them up. Parallel
+lease tests hold all slots and observe exact requested task paths through a
+method on the shared service, under the same monitor as the lease wait. The
+fixture captures the service provider during configuration and resolves the
+implementation method at execution; it does not serialize the service or method.
+Positive and no-waiter controls exercise this boundary and cache replay. Latch
+the barrier once it opens so a returned lease cannot make other holders miss it.
+The failing fixture still reflects Gradle's listener subscriptions to dispatch
+the root completion; the real simulator smoke test also covers failure release.
+Use a single worker for tests that require sequential
 task execution: `--no-parallel` does not serialize tasks restored from the
 configuration cache.
 

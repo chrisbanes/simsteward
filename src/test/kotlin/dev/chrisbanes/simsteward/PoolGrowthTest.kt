@@ -8,8 +8,10 @@ import java.security.MessageDigest
 import java.util.HexFormat
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.gradle.testkit.runner.BuildResult
+import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.io.TempDir
 
 class PoolGrowthTest {
@@ -17,6 +19,64 @@ class PoolGrowthTest {
   lateinit var directory: File
 
   private val parallel = arrayOf("--parallel", "--max-workers=4")
+
+  @Test
+  fun waiterObservationRequiresBlockedRequest() = positiveWaiterObservation(false)
+
+  @Test
+  fun isolatedWaiterObservationRequiresBlockedRequest() = positiveWaiterObservation(true)
+
+  private fun positiveWaiterObservation(isolated: Boolean) {
+    val build = FixtureBuild(directory)
+    build.addModule("second")
+    repeat(3) { iteration ->
+      resetBarrier(build)
+      val result = build.build(*tasks("lib", "second"), *parallel, *isolation(isolated), "--rerun-tasks", "-Psimsteward.maxSimulators=1", "-Pfixture.holders=1", "-Pfixture.awaitWaiter")
+      if (iteration > 0) assertTrue("Reusing configuration cache." in result.output, result.output)
+      val commands = build.commands()
+      assertTrue(build.root.resolve("arrivals/open").exists())
+      assertTrue("true" in build.root.resolve("arrivals/observations").readLines())
+      assertEquals(1, build.creates().size, "$commands")
+      assertEquals(2, commands.count { it.startsWith("test ") }, "$commands")
+      val renames = commands.withIndex().filter { it.value.startsWith("xcrun simctl rename ${FixtureBuild.UDID} ") }
+      assertTrue(renames.size >= 4, "$commands")
+      assertTrue(renames[0].value.endsWith(result.device("lib")) || renames[0].value.endsWith(result.device("second")), "$commands")
+      assertTrue(renames[1].value.endsWith(build.poolName()), "$commands")
+      assertTrue(renames[2].value != renames[0].value && !renames[2].value.endsWith(build.poolName()), "$commands")
+      assertTrue(commands.indexOfFirst { it.startsWith("test ") } in (renames[0].index + 1) until renames[1].index, "$commands")
+    }
+  }
+
+  @Test
+  fun waiterObservationDoesNotOpenWithoutAWaiter() = negativeWaiterObservation(false)
+
+  @Test
+  fun isolatedWaiterObservationDoesNotOpenWithoutAWaiter() = negativeWaiterObservation(true)
+
+  private fun negativeWaiterObservation(isolated: Boolean) {
+    val build = FixtureBuild(directory)
+    repeat(2) { iteration ->
+      resetBarrier(build)
+      val result = build.buildAndFail(":lib:iosSimulatorArm64Test", *parallel, *isolation(isolated), "--rerun-tasks", "-Psimsteward.maxSimulators=1", "-Pfixture.holders=1", "-Pfixture.awaitWaiter", "-Pfixture.waiterDeadlineMillis=2000")
+      if (iteration > 0) assertTrue("Reusing configuration cache." in result.output, result.output)
+      assertTrue("fixture barrier timed out" in result.output, result.output)
+      assertTrue(build.root.resolve("arrivals/1").exists())
+      assertFalse(build.root.resolve("arrivals/open").exists())
+      val observations = build.root.resolve("arrivals/observations").readLines()
+      assertTrue(observations.size > 1 && observations.all { it == "false" }, "$observations")
+      assertEquals(1, build.creates().size)
+      assertEquals(1, build.commands().count { it.startsWith("test ") })
+      assertTrue(build.commands().last().startsWith("xcrun simctl delete "), build.commands().toString())
+    }
+  }
+
+  private fun isolation(enabled: Boolean) = if (enabled) arrayOf("-Dorg.gradle.unsafe.isolated-projects=true") else emptyArray()
+
+  private fun resetBarrier(build: FixtureBuild) {
+    build.root.resolve("arrivals").deleteRecursively()
+    build.root.resolve("udids").deleteRecursively()
+    build.clearCommands()
+  }
 
   @Test
   fun parallelTasksInTwoModulesLeaseTwoDistinctSimulators() {
@@ -197,28 +257,51 @@ class PoolGrowthTest {
     "simsteward-" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(build.root.canonicalPath.toByteArray())).take(8) + path
 
   @Test
-  fun failedTaskReturnsItsLeaseToAWaitingTask() {
+  fun failedTaskReturnsItsLeaseToAWaitingTask() = failureReturnsToWaiter(false)
+
+  @Test
+  fun isolatedFailedTaskReturnsItsLeaseToAWaitingTask() = failureReturnsToWaiter(true)
+
+  private fun failureReturnsToWaiter(isolated: Boolean) {
     val build = FixtureBuild(directory)
     build.addModule("second")
+    repeat(3) { iteration ->
+      resetBarrier(build)
+      val result = build.buildAndFail(
+        *tasks("lib", "second"),
+        *parallel,
+        *isolation(isolated),
+        "--rerun-tasks",
+        "--continue",
+        "-Psimsteward.maxSimulators=1",
+        "-Pfixture.holders=1",
+        "-Pfixture.awaitWaiter",
+        "-Pfixture.failTest",
+      )
 
-    val result = build.buildAndFail(
-      *tasks("lib", "second"),
-      *parallel,
-      "--continue",
-      "-Psimsteward.maxSimulators=1",
-      "-Pfixture.holders=1",
-      "-Pfixture.awaitWaiter",
-      "-Pfixture.failTest",
-    )
-
-    val udid = FixtureBuild.UDID
-    assertEquals(1, build.creates().size, build.commands().toString())
-    assertEquals(
-      listOf(result.device("lib"), result.device("second")).sorted(),
-      build.commands().mapNotNull { Regex("xcrun simctl rename $udid (\\S+:\\S+)").find(it)?.groupValues?.get(1) }.sorted(),
-    )
-    assertEquals(2, build.commands().count { it.startsWith("test ") }, build.commands().toString())
-    assertTrue("fixture test failure" in result.output, result.output)
+      val udid = FixtureBuild.UDID
+      assertEquals(1, build.creates().size, build.commands().toString())
+      assertEquals(
+        listOf(result.device("lib"), result.device("second")).sorted(),
+        build.commands().mapNotNull { Regex("xcrun simctl rename $udid (\\S+:\\S+)").find(it)?.groupValues?.get(1) }.sorted(),
+      )
+      assertEquals(2, build.commands().count { it.startsWith("test ") }, build.commands().toString())
+      assertEquals(TaskOutcome.FAILED, result.task(":lib:iosSimulatorArm64Test")?.outcome)
+      assertEquals(TaskOutcome.FAILED, result.task(":second:iosSimulatorArm64Test")?.outcome)
+      assertTrue("fixture test failure" in result.output, result.output)
+      if (iteration > 0) assertTrue("Reusing configuration cache." in result.output, result.output)
+      val commands = build.commands()
+      val first = commands.first { it.startsWith("test ") }.removePrefix("test ")
+      val second = commands.first { it.startsWith("test ") && it != "test $first" }.removePrefix("test ")
+      val root = commands.indexOf("root $first")
+      val returned = commands.indexOf("xcrun simctl rename $udid ${build.poolName()}")
+      val secondRename = commands.indexOfFirst { it.startsWith("xcrun simctl rename $udid ") && it.endsWith(second) }
+      val arrival = commands.indexOf("arrival $second")
+      val thrown = commands.indexOf("throw $first")
+      assertTrue(commands.indexOf("test $first") < root && root < returned && returned < secondRename && secondRename < arrival && arrival < thrown, "$commands")
+      assertTrue("fixture reuse barrier timed out" !in result.output, result.output)
+      assertTrue(commands.last().startsWith("xcrun simctl delete "), "$commands")
+    }
   }
 
   private companion object {

@@ -77,7 +77,9 @@ class FixtureBuild(
         }
       }
 
-      // Registered before simsteward so that simsteward's doFirst runs before this one.
+      apply(plugin = "dev.chrisbanes.simsteward")
+
+      // Simsteward adds its doFirst after evaluation, so it still runs first.
       tasks.withType<KotlinNativeSimulatorTest>().configureEach {
         // Drops KGP's test action; the doFirst below stands in for it.
         actions.clear()
@@ -88,11 +90,15 @@ class FixtureBuild(
         // hold one and, with `fixture.awaitWaiter`, until another lease request is waiting.
         val holders = project.providers.gradleProperty("fixture.holders").orNull?.toInt() ?: 0
         val awaitWaiter = project.providers.gradleProperty("fixture.awaitWaiter").isPresent
+        val waiterDeadline = project.providers.gradleProperty("fixture.waiterDeadlineMillis").orNull?.toLong() ?: 60_000L
+        val service = checkNotNull(gradle.sharedServices.registrations.findByName("simsteward")) { "simsteward service not registered" }.service
+        val requestedPaths = gradle.startParameter.taskNames.toSet()
         val holdLease = project.providers.gradleProperty("fixture.holdLease").isPresent
         val readyFile = File("${root.resolve("lease-ready").absolutePath}")
         val releaseFile = File("${root.resolve("lease-release").absolutePath}")
         val arrivals = File("${root.resolve("arrivals").absolutePath}")
         doFirst {
+          var ordinal = 0
           val deviceName = runCatching { device.get() }.getOrNull()
           println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
@@ -106,16 +112,20 @@ class FixtureBuild(
           }
           if (holders > 0) {
             arrivals.mkdirs()
-            var ordinal = 1
+            ordinal = 1
             while (!File(arrivals, ordinal.toString()).mkdir()) ordinal++
-            // A lease request is waiting when a thread blocks inside simsteward's code.
-            fun leaseIsWaiting() = Thread.getAllStackTraces().any { (thread, frames) ->
-              thread.state == Thread.State.WAITING && frames.any { it.className.startsWith("dev.chrisbanes.simsteward.") }
+            File("${commandLog.absolutePath}").appendText("arrival ${'$'}path\n")
+            File(arrivals, "arrived-${'$'}ordinal").mkdir()
+            fun leaseIsWaiting(): Boolean {
+              val instance = service.get()
+              val waiting = instance.javaClass.getMethod("isWaitingForLease", Set::class.java).invoke(instance, requestedPaths) as Boolean
+              File(arrivals, "observations").appendText("${'$'}waiting\n")
+              return waiting
             }
             // Latched: once one holder sees the barrier met, the waiter it frees no longer waits, so others must not re-check.
             val open = File(arrivals, "open")
-            fun ready() = open.exists() || (arrivals.list()!!.count { it != "open" } >= holders && (!awaitWaiter || leaseIsWaiting()) && open.mkdir())
-            val deadline = System.nanoTime() + 60_000_000_000L
+            fun ready() = open.exists() || (arrivals.list()!!.count { it.toIntOrNull() != null } >= holders && (!awaitWaiter || leaseIsWaiting()) && open.mkdir())
+            val deadline = System.nanoTime() + waiterDeadline * 1_000_000L
             while (ordinal <= holders && !ready()) {
               check(System.nanoTime() < deadline) { "fixture barrier timed out in ${'$'}path" }
               Thread.sleep(10)
@@ -131,13 +141,21 @@ class FixtureBuild(
             })
             val root = stub(TestDescriptor::class.java)
             val result = stub(TestResult::class.java)
+            val proveReuse = awaitWaiter && holders == 1 && requestedPaths.size > 1
+            if (proveReuse) File("${commandLog.absolutePath}").appendText("root ${'$'}path\n")
             listeners.filterIsInstance<TestListener>().forEach { it.afterSuite(root, result) }
+            if (ordinal == 1 && proveReuse) {
+              val deadline = System.nanoTime() + 60_000_000_000L
+              while (!File(arrivals, "arrived-2").exists()) {
+                check(System.nanoTime() < deadline) { "fixture reuse barrier timed out in ${'$'}path" }
+                Thread.sleep(10)
+              }
+            }
+            if (proveReuse) File("${commandLog.absolutePath}").appendText("throw ${'$'}path\n")
             throw GradleException("fixture test failure")
           }
         }
       }
-
-      apply(plugin = "dev.chrisbanes.simsteward")
       """.trimIndent(),
     )
   }
