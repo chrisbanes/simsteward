@@ -27,15 +27,15 @@ internal data class Shard(val index: Int, val count: Int)
  */
 internal fun Project.configureShards(count: Int, configurationCache: Boolean): Map<String, Shard> {
   checkTestShards(count)
-  if (count == 1) return emptyMap()
+  val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets.withType(KotlinNativeTargetWithSimulatorTests::class.java).toList()
+  if (count == 1 || targets.isEmpty()) return emptyMap()
   // Without the configuration cache, Gradle runs one project's tasks one at a time, so shards would only add overhead.
   if (!configurationCache) {
     logger.lifecycle("simsteward: testShards=$count ignored for $path; sharding needs the configuration cache (org.gradle.configuration-cache=true).")
     return emptyMap()
   }
   val shards = mutableMapOf<String, Shard>()
-  val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets.withType(KotlinNativeTargetWithSimulatorTests::class.java)
-  targets.toList().forEach { target ->
+  targets.forEach { target ->
     val shardTasks = (1..count).map { index ->
       target.testRuns.create("shard$index") { it.setExecutionSourceFrom(target.binaries.getTest(NativeBuildType.DEBUG)) }
       val name = "${target.name}Shard${index}Test"
@@ -76,17 +76,17 @@ internal class ShardAction(
   override fun execute(task: Task) {
     task as KotlinNativeSimulatorTest
     val service = leases.get()
+    // Clear a previous run's results first, so a shard that runs nothing doesn't show them in the combined report.
+    task.binaryResultsDirectory.get().asFile.deleteRecursively()
+    task.reports.junitXml.outputLocation.get().asFile.deleteRecursively()
     val listing = try {
       service.listTests(xcrun.get(), task.device.get(), task.executable.absolutePath)
     } catch (failure: Exception) {
-      service.release(key)
+      runCatching { service.release(key) }.exceptionOrNull()?.let(failure::addSuppressed)
       throw failure
     }
     val share = shareOf(listing, shard.index, shard.count)
     if (share.isEmpty()) {
-      // Nothing to run: clear results a previous run left, so the combined report doesn't show them.
-      task.binaryResultsDirectory.get().asFile.deleteRecursively()
-      task.reports.junitXml.outputLocation.get().asFile.deleteRecursively()
       service.release(key)
       task.logger.lifecycle("simsteward: ${task.path} has no test classes in its share; skipping its test run.")
       throw StopExecutionException()

@@ -75,7 +75,7 @@ abstract class SimstewardPlugin @Inject constructor(
       // Deferred so that the project's own `simsteward {}` block has run.
       afterEvaluate {
         if (!extension.enabled.get()) return@afterEvaluate
-        val shards = configureShards(extension.testShards.get(), buildFeatures.configurationCache.requested.getOrElse(false))
+        val shards = configureShards(extension.testShards.get(), buildFeatures.configurationCache.active.getOrElse(false))
         tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
           val name = "$NAME_PREFIX-$buildRootHash${task.path}"
           // Task completion events name tasks by their build-tree path, which differs from task.path in an included build.
@@ -100,7 +100,11 @@ abstract class SimstewardPlugin @Inject constructor(
           task.localState.register(resolvedState)
           task.outputs.upToDateWhen(ResolvedSpecUpToDate(leases, families, extension, xcrun, simslim, projectDir, resolvedState.get().asFile))
           // Registered before the lease's doFirst, so it runs after the lease is taken.
-          shards[task.name]?.let { task.doFirst(ShardAction(leases, key, xcrun, it)) }
+          shards[task.name]?.let { shard ->
+            // The share depends on both, so a changed count reruns every shard rather than leaving stale shares up to date.
+            task.inputs.property("simsteward.shard", "${shard.index}/${shard.count}")
+            task.doFirst(ShardAction(leases, key, xcrun, shard))
+          }
           task.doFirst(
             LeaseAction(
               leases,

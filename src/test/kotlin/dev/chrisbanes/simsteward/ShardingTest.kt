@@ -92,10 +92,11 @@ class ShardingTest {
   fun withoutConfigurationCacheTheOriginalRunsAndSaysWhy() {
     val build = sharded(3)
 
-    // A dry run: without the configuration cache, newer KGP reads swift-import outputs the fixture's stubs don't produce.
+    // A dry run, which lists what would run: without the configuration cache, newer KGP reads swift-import
+    // outputs the fixture's stubs don't produce. Unsharded runs themselves are covered throughout the suite.
     val result = build.build(original, "--no-configuration-cache", "--dry-run")
 
-    assertTrue("$original SKIPPED" in result.output, result.output)
+    assertTrue("$original SKIPPED" in result.output, result.output) // Scheduled: dry runs report every task as SKIPPED.
     assertFalse("Shard1Test" in result.output, result.output)
     assertEquals(1, Regex("testShards=3 ignored for :lib; sharding needs the configuration cache").findAll(result.output).count(), result.output)
     assertTrue(build.commands().none { it.startsWith("xcrun simctl spawn") })
@@ -231,6 +232,20 @@ class ShardingTest {
 
     (1..2).forEach { assertEquals(TaskOutcome.UP_TO_DATE, again.outcome(shard(it)), again.output) }
     assertEquals(emptyList(), build.commands())
+  }
+
+  @Test
+  fun changingTheShardCountRerunsEveryShard() {
+    // The property, because the extension would override it.
+    val build = FixtureBuild(directory)
+    build.listTestClasses("a.A", "b.B", "c.C", "d.D", "e.E")
+    build.build(original, "-Psimsteward.testShards=3")
+    build.clearCommands()
+
+    val result = build.build(original, "-Psimsteward.testShards=2")
+
+    (1..2).forEach { assertEquals(TaskOutcome.SUCCESS, result.outcome(shard(it)), result.output) }
+    assertEquals(mapOf(shard(1) to "[a.A, c.C, e.E]", shard(2) to "[b.B, d.D]"), build.filters())
   }
 
   @Test

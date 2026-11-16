@@ -30,12 +30,15 @@ task name.
 
 ## Shards
 
-With `testShards > 1` and the configuration cache requested, simsteward creates KGP test runs
+With `testShards > 1` and the configuration cache active (requested, or implied by Isolated
+Projects), simsteward creates KGP test runs
 `shard1`…`shardN` on each simulator target from its debug test binary, in its `afterEvaluate`.
 KGP registers each as an ordinary `KotlinNativeSimulatorTest` (and adds it to `allTests`), so the
 per-task lease configuration applies unchanged. A shard's partition action is registered just
 before the lease's `doFirst`, so it runs after the lease and before KGP's test action: it lists
 classes with `simctl spawn <device> <binary> --ktest_list_tests` and sets the shard's include filter.
+The filter input is snapshotted before that, so the shard's index and count are a separate task
+input: a changed count must rerun every shard.
 The original task depends on its shards through a provider that Gradle resolves after applying
 `--tests`; a filtered run schedules no shards, and the original's `onlyIf` runs it only then.
 Gradle's public filter API hides `--tests` patterns, so simsteward reads
