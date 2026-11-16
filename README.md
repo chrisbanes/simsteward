@@ -2,6 +2,8 @@
 
 Simsteward is a Gradle plugin for Kotlin Multiplatform builds. It gives the build's Apple simulator tests their own managed simulators: the build creates them, lends one to each test task as a lease, and deletes them when the build ends. Simulators can optionally be slimmed with SimSlim.
 
+Simsteward never selects, resets or deletes a simulator it did not create, so the simulators you use day to day are left alone.
+
 ## Setup
 
 Requires JDK 17, Gradle 8.14 and Kotlin Gradle plugin 2.2.0 or newer.
@@ -25,24 +27,93 @@ plugins {
 }
 ```
 
+Simsteward is a project plugin, not a settings plugin: applying it opts that project in. Apply it to each Kotlin Multiplatform project whose simulator tests it should manage. In a project without Kotlin Multiplatform it does nothing.
+
+## How it works
+
+Simsteward takes over every iOS, tvOS and watchOS simulator test task (such as `iosSimulatorArm64Test`) in the project.
+
+Managed simulators with the same simulator spec (platform, device type, runtime, and whether they are slim or stock) form a pool, shared by every project in the build. When a test task starts, it leases an idle simulator from its pool. If none is idle, the pool creates one, up to `maxSimulators`. Once the pool is at its cap, the task waits for another task to return its lease, and logs that it is waiting. A task returns its lease when its tests finish or fail.
+
+While leased, a simulator is renamed after the task that holds it, for example `simsteward-1a2b3c4d:app:iosSimulatorArm64Test`; the hash comes from the build's root directory. Between leases it goes back to its pool name, such as `simsteward-5e6f7a8b`. At the end of the build, simsteward deletes every simulator it created.
+
 ## Configuration
 
-The `simsteward {}` extension overrides, per project, the matching `simsteward.*` Gradle properties:
+Set the build's defaults as Gradle properties in the root project's `gradle.properties`. Every project that applies simsteward reads them:
+
+```properties
+simsteward.slim=true
+simsteward.maxSimulators=3
+simsteward.ios.deviceType=com.apple.CoreSimulator.SimDeviceType.iPhone-16
+simsteward.ios.runtime=com.apple.CoreSimulator.SimRuntime.iOS-18-2
+```
+
+Then, where a module needs something different, override those values in that module's `simsteward {}` block:
 
 ```kotlin
 simsteward {
-  slim.set(true)
-  maxSimulators.set(3)
+  maxSimulators.set(1)
   ios {
-    deviceType.set("<device type identifier>")
-    runtime.set("<runtime identifier>")
+    deviceType.set("com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M2")
   }
 }
 ```
 
-`enabled`, `slim` and `maxSimulators` default to `true`, `false` and `2`; `testShards` is described under [Test shards](#test-shards). `ios`, `tvos` and `watchos` each take `deviceType`, `runtime` and `profile`; unset values are chosen automatically.
+The `simsteward {}` block only configures the project it is in. A block in the root project's build file does not reach its subprojects, so put build-wide defaults in `gradle.properties` instead. Gradle's Isolated Projects stops one project from reading another's configuration.
 
-Slimming (`slim`, or the `simsteward.slim=true` property) needs [SimSlim](https://github.com/MobAI-App/simslim) (`brew install mobai-app/tap/simslim`). Two build-wide Gradle properties locate the tools when they are not on the Gradle daemon's `PATH` or at the default location: `simsteward.simslim` (default `simslim`) and `simsteward.xcrun` (default `/usr/bin/xcrun`).
+| Gradle property | Extension | Default | |
+|---|---|---|---|
+| `simsteward.enabled` | `enabled` | `true` | `false` leaves this project's test tasks as Kotlin configures them. |
+| `simsteward.slim` | `slim` | `false` | Slims new managed simulators with SimSlim. |
+| `simsteward.maxSimulators` | `maxSimulators` | `2` | The most simulators one pool may hold. Must be at least 1. |
+| `simsteward.testShards` | `testShards` | `1` | Splits each simulator test task into this many shards; see [Test shards](#test-shards). Must be at least 1. |
+| `simsteward.<platform>.deviceType` | `<platform> { deviceType }` | unset | Pins the device type identifier. |
+| `simsteward.<platform>.runtime` | `<platform> { runtime }` | unset | Pins the runtime identifier. |
+| `simsteward.<platform>.profile` | `<platform> { profile }` | unset | Path to the SimSlim profile for slim simulators. |
+| `simsteward.xcrun` | | `/usr/bin/xcrun` | Path to `xcrun`. |
+| `simsteward.simslim` | | `simslim` | Path to SimSlim, when it is not on the Gradle daemon's `PATH`. |
+
+`<platform>` is `ios`, `tvos` or `watchos`. `xcrun` and `simslim` are build-wide and have no extension setting.
+
+`maxSimulators` is not part of the simulator spec. Projects that share a pool each apply their own cap when they lease from it.
+
+A relative `profile` path resolves against the build's root directory when it is set by property, and against the project directory when it is set in the extension.
+
+### Pinning
+
+When the device type or runtime is not pinned, simsteward picks the newest installed runtime for the platform and a device type that runtime supports. Pin both to keep a test task on a fixed simulator, whatever Xcode installs.
+
+An unpinned task is not up to date once the pick changes, so installing a newer runtime reruns its tests on the next build.
+
+You find the identifiers to pin with `xcrun simctl list runtimes` and `xcrun simctl list devicetypes`.
+
+## Slim and stock simulators
+
+Managed simulators are stock by default: every background service runs, as on a simulator you create yourself. Simsteward boots each one before its first lease.
+
+With slimming on, simsteward runs `simslim on` and `simslim verify` on each new managed simulator, which disables the background services its profile does not keep. Without a `profile`, simsteward passes none and SimSlim's own default applies. If your tests depend on a service the profile turns off, give that platform a profile that keeps it.
+
+Slimming needs [SimSlim](https://github.com/MobAI-App/simslim):
+
+```shell
+brew install mobai-app/tap/simslim
+```
+
+If slimming a simulator fails, the test task fails. Simsteward does not fall back to a stock simulator.
+
+Slim and stock simulators, and slim simulators with different profiles, never share a pool.
+
+## When things go wrong
+
+**No installed runtime**: if no installed runtime matches the platform, or the pinned runtime or device type, the task fails. Install a runtime in Xcode > Settings > Components, or pin identifiers that are installed.
+
+**Several runtimes with the same version**: if two installed runtime identifiers share the newest version, simsteward cannot pick between them and the task fails, naming both. Pin one with `simsteward.<platform>.runtime`.
+
+**`xcrun` or SimSlim cannot start**: the Gradle daemon may not have the same `PATH` as your shell. Set `simsteward.xcrun` or `simsteward.simslim` to the tool's full path.
+
+**Another simulator has the task's name**: `simctl` cannot tell two simulators with the same name apart, so the task fails rather than risk testing on the wrong one. This usually means another build of the same checkout is running that task; wait for it to finish. Otherwise, delete or rename the simulator the error names.
+
+**A simulator cannot be deleted at the end of the build**: simsteward reports the failure and keeps the simulator's record, so a later build reaps it as an orphan.
 
 ## Test shards
 
@@ -62,7 +133,19 @@ Each shard writes its own results under `build/test-results/<shard task>`, and a
 
 ## Orphaned simulators
 
-If a build dies before deleting its simulators, the next build that leases one deletes them. To delete them without running tests, run `./gradlew simstewardReap`. Simulators owned by a Gradle daemon that is still running are left alone; stop it with `./gradlew --stop` first.
+If a build dies before deleting its simulators, for example when the Gradle daemon is killed, they become orphans. Simsteward records each managed simulator it creates, and its owning Gradle daemon, under `simsteward/records` in the Gradle user home (`~/.gradle` by default). A simulator is an orphan only once its owning daemon has exited.
+
+The next build that leases a simulator reaps orphans first. To reap them without running tests, run:
+
+```shell
+./gradlew simstewardReap
+```
+
+Reaping leaves these alone:
+
+- **Simulators owned by a running Gradle daemon.** They may still be in use. If no build is using them, stop the daemon with `./gradlew --stop`, then run `simstewardReap`.
+- **Simulators created with a different `xcrun`.** Reaping warns about them; reap them with `./gradlew simstewardReap -Psimsteward.xcrun=<path>`, using the path the warning names.
+- **Simulators named `simsteward-…` with no record.** Simsteward cannot confirm that they are orphans, so it only warns. Delete one yourself with `xcrun simctl delete <udid>` once you know no build is using it.
 
 ## Snapshots
 
