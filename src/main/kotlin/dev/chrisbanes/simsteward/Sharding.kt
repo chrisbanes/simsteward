@@ -4,7 +4,6 @@
 package dev.chrisbanes.simsteward
 
 import org.gradle.api.Action
-import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter
@@ -26,7 +25,7 @@ internal data class Shard(val index: Int, val count: Int)
  * tests, unless `--tests` filters it. Returns the shards by task name; empty when sharding is off.
  */
 internal fun Project.configureShards(count: Int, configurationCache: Boolean): Map<String, Shard> {
-  checkTestShards(count)
+  checkAtLeastOne("testShards", count)
   val targets = extensions.getByType(KotlinMultiplatformExtension::class.java).targets.withType(KotlinNativeTargetWithSimulatorTests::class.java).toList()
   if (count == 1 || targets.isEmpty()) return emptyMap()
   // Without the configuration cache, Gradle runs one project's tasks one at a time, so shards would only add overhead.
@@ -46,10 +45,10 @@ internal fun Project.configureShards(count: Int, configurationCache: Boolean): M
     val report = tasks.register("${target.name}TestShardReport", TestReport::class.java) { report ->
       report.description = "Combines the reports of ${original.name}'s shards."
       // Location only: the original doesn't produce this report, so the report must not depend on it.
-      report.destinationDirectory.set(original.get().reports.html.outputLocation.locationOnly)
+      report.destinationDirectory.set(original.flatMap { it.reports.html.outputLocation.locationOnly })
       // Ordered after the shards rather than depending on them, so a failing shard still gets the report.
       report.mustRunAfter(shardTasks)
-      report.testResults.from(shardTasks.map { shard -> shard.get().binaryResultsDirectory.locationOnly })
+      report.testResults.from(shardTasks.map { shard -> shard.flatMap { it.binaryResultsDirectory.locationOnly } })
     }
     shardTasks.forEach { shard -> shard.configure { it.finalizedBy(report) } }
     original.configure { task ->
@@ -69,25 +68,18 @@ internal fun Project.configureShards(count: Int, configurationCache: Boolean): M
  */
 internal class ShardAction(
   private val leases: Provider<LeaseService>,
-  private val key: String,
   private val xcrun: Provider<String>,
   private val shard: Shard,
 ) : Action<Task> {
   override fun execute(task: Task) {
     task as KotlinNativeSimulatorTest
-    val service = leases.get()
     // Clear a previous run's results first, so a shard that runs nothing doesn't show them in the combined report.
     task.binaryResultsDirectory.get().asFile.deleteRecursively()
     task.reports.junitXml.outputLocation.get().asFile.deleteRecursively()
-    val listing = try {
-      service.listTests(xcrun.get(), task.device.get(), task.executable.absolutePath)
-    } catch (failure: Exception) {
-      runCatching { service.release(key) }.exceptionOrNull()?.let(failure::addSuppressed)
-      throw failure
-    }
+    // Ending early, by failure or StopExecutionException, leaves the lease to the task-completion backstop.
+    val listing = leases.get().listTests(xcrun.get(), task.device.get(), task.executable.absolutePath)
     val share = shareOf(listing, shard.index, shard.count)
     if (share.isEmpty()) {
-      service.release(key)
       task.logger.lifecycle("simsteward: ${task.path} has no test classes in its share; skipping its test run.")
       throw StopExecutionException()
     }
@@ -110,10 +102,3 @@ internal fun shareOf(listing: String, index: Int, count: Int): List<String> =
 /** The original task's `--tests` patterns, which Gradle's public test filter API does not expose. */
 private fun commandLineIncludePatterns(task: AbstractTestTask): Set<String> =
   (task.filter as? DefaultTestFilter)?.commandLineIncludePatterns.orEmpty()
-
-internal fun parseTestShards(text: String): Int =
-  text.toIntOrNull() ?: throw GradleException("simsteward.testShards must be a whole number, but was '$text'.")
-
-private fun checkTestShards(value: Int) {
-  if (value < 1) throw GradleException("testShards must be at least 1, but was $value.")
-}

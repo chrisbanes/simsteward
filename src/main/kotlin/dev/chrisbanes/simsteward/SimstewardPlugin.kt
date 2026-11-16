@@ -48,8 +48,8 @@ abstract class SimstewardPlugin @Inject constructor(
       val extension = extensions.create("simsteward", SimstewardExtension::class.java)
       extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
       extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(false))
-      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map(::parseMaxSimulators).orElse(2))
-      extension.testShards.convention(providers.gradleProperty("simsteward.testShards").map(::parseTestShards).orElse(1))
+      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map { parseCount("maxSimulators", it) }.orElse(2))
+      extension.testShards.convention(providers.gradleProperty("simsteward.testShards").map { parseCount("testShards", it) }.orElse(1))
       Platform.entries.forEach { platform ->
         val settings = extension.of(platform)
         listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime)
@@ -103,7 +103,7 @@ abstract class SimstewardPlugin @Inject constructor(
           shards[task.name]?.let { shard ->
             // The share depends on both, so a changed count reruns every shard rather than leaving stale shares up to date.
             task.inputs.property("simsteward.shard", "${shard.index}/${shard.count}")
-            task.doFirst(ShardAction(leases, key, xcrun, shard))
+            task.doFirst(ShardAction(leases, xcrun, shard))
           }
           task.doFirst(
             LeaseAction(
@@ -168,7 +168,7 @@ private class LeaseAction(
       name,
       spec,
       ownership,
-      checkMaxSimulators(extension.maxSimulators.get()),
+      checkAtLeastOne("maxSimulators", extension.maxSimulators.get()),
     )
     if (settings.runtime.orNull == null || settings.deviceType.orNull == null) service.stage(key, resolvedState, spec)
     // Added at execution, so the listener never enters the configuration cache.
@@ -211,12 +211,13 @@ private class ReleaseAction(private val leases: Provider<LeaseService>, private 
   override fun execute(task: Task) = leases.get().release(key)
 }
 
-private fun parseMaxSimulators(text: String): Int =
-  text.toIntOrNull() ?: throw GradleException("simsteward.maxSimulators must be a whole number, but was '$text'.")
+/** Parses the `simsteward.<name>` property; the range is checked when the value is read, see [checkAtLeastOne]. */
+internal fun parseCount(name: String, text: String): Int =
+  text.toIntOrNull() ?: throw GradleException("simsteward.$name must be a whole number, but was '$text'.")
 
-/** The one place a cap is range-checked, when it is read, whether it came from the property or the extension. */
-private fun checkMaxSimulators(value: Int): Int =
-  value.also { if (it < 1) throw GradleException("maxSimulators must be at least 1, but was $it.") }
+/** The one place a count is range-checked, when it is read, whether it came from the property or the extension. */
+internal fun checkAtLeastOne(name: String, value: Int): Int =
+  value.also { if (it < 1) throw GradleException("$name must be at least 1, but was $it.") }
 
 internal const val NAME_PREFIX = "simsteward"
 

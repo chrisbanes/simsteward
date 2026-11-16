@@ -29,8 +29,12 @@ class ShardingTest {
   private fun FixtureBuild.filters(): Map<String, String> = commands().filter { it.startsWith("shard-filter ") }
     .associate { line -> line.removePrefix("shard-filter ").split(" ", limit = 2).let { it[0] to it[1] } }
 
-  private fun FixtureBuild.leaseRenames() = commands().count { it.startsWith("xcrun simctl rename ") && "Shard" in it }
-  private fun FixtureBuild.returnRenames() = commands().count { it.startsWith("xcrun simctl rename ") && "Shard" !in it }
+  /** Asserts [leased] shard leases were taken (any, when null) and every one was renamed back to its pool name. */
+  private fun FixtureBuild.assertShardLeasesReturned(leased: Int? = null) {
+    val renames = commands().filter { it.startsWith("xcrun simctl rename ") }.partition { "Shard" in it }
+    if (leased == null) assertTrue(renames.first.isNotEmpty(), commands().toString()) else assertEquals(leased, renames.first.size, commands().toString())
+    assertEquals(renames.first.size, renames.second.size, commands().toString())
+  }
   private fun BuildResult.outcome(path: String) = task(path)?.outcome
 
   @Test
@@ -178,8 +182,7 @@ class ShardingTest {
 
     assertEquals(TaskOutcome.SUCCESS, result.outcome(shard(3)))
     assertFalse("test ${shard(3)}" in build.commands(), build.commands().toString())
-    assertEquals(3, build.leaseRenames())
-    assertEquals(3, build.returnRenames())
+    build.assertShardLeasesReturned(3)
   }
 
   @Test
@@ -191,7 +194,7 @@ class ShardingTest {
 
     assertTrue("Simulator command failed with exit code 3" in result.output, result.output)
     assertTrue("xcrun: injected failure for simctl spawn" in result.output, result.output)
-    assertEquals(build.leaseRenames(), build.returnRenames())
+    build.assertShardLeasesReturned()
     assertTrue(build.commands().none { it.startsWith("test ") }, build.commands().toString())
   }
 
@@ -217,8 +220,7 @@ class ShardingTest {
 
     val result = build.buildAndFail(original, "-Pfixture.failTest")
 
-    assertTrue(build.leaseRenames() > 0, build.commands().toString())
-    assertEquals(build.leaseRenames(), build.returnRenames())
+    build.assertShardLeasesReturned()
     assertTrue(result.task(report) != null, result.output)
   }
 
