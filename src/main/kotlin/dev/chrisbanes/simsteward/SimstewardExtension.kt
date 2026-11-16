@@ -24,6 +24,13 @@ abstract class SimstewardExtension {
    */
   abstract val maxSimulators: Property<Int>
 
+  /**
+   * `simsteward.testShards`, default 1 (off): how many shard tasks each simulator test task is split
+   * into, each leasing its own simulator and running a share of the test classes. Sharding needs the
+   * configuration cache; without it, simsteward does not shard.
+   */
+  abstract val testShards: Property<Int>
+
   @get:Nested abstract val ios: PlatformSettings
 
   @get:Nested abstract val tvos: PlatformSettings

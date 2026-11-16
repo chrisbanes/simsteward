@@ -303,6 +303,10 @@ internal abstract class LeaseService :
     return OwnerProcess(true, javaStart, if (javaStart == null && seconds != null) readOwnerStartSeconds(exec, pid) else null)
   }
 
+  /** The test binary's `--ktest_list_tests` output, run on the simulator named [device]. */
+  internal fun listTests(xcrun: String, device: String, executable: String): String =
+    simctl(xcrun, "spawn", device, executable, "--ktest_list_tests")
+
   private fun simctl(xcrun: String, vararg arguments: String): String = run(listOf(xcrun, "simctl", *arguments))
 
   /** [missing] tells the user how to fix an executable that cannot be started. */

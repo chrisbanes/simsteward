@@ -79,6 +79,9 @@ class FixtureBuild(
 
       apply(plugin = "dev.chrisbanes.simsteward")
 
+      // Shard test runs set their executable to the link output when simsteward creates them after evaluation; keep the fake.
+      afterEvaluate { tasks.withType<KotlinNativeSimulatorTest>().configureEach { executable(file("test.kexe")) } }
+
       // Simsteward adds its doFirst after evaluation, so it still runs first.
       tasks.withType<KotlinNativeSimulatorTest>().configureEach {
         // Drops KGP's test action; the doFirst below stands in for it.
@@ -102,6 +105,7 @@ class FixtureBuild(
           val deviceName = runCatching { device.get() }.getOrNull()
           println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
+          if (filter.includePatterns.isNotEmpty()) File("${commandLog.absolutePath}").appendText("shard-filter ${'$'}path ${'$'}{filter.includePatterns.sorted()}\n")
           if (holdLease) {
             readyFile.writeText("ready")
             val deadline = System.nanoTime() + 60_000_000_000L
@@ -177,6 +181,11 @@ class FixtureBuild(
   /** Sets what the fake `xcrun simctl list -j runtimes` prints. */
   fun installRuntimes(json: String) {
     root.resolve("bin").apply { mkdirs() }.resolve("runtimes.json").writeText(json)
+  }
+
+  /** Sets the classes the fake `simctl spawn <device> <binary> --ktest_list_tests` lists, one test each. */
+  fun listTestClasses(vararg classes: String) {
+    root.resolve("test-list.txt").writeText(classes.joinToString("") { "$it.\n  test\n" })
   }
 
   /** Makes the fakes fail every command that starts with [command], such as `simctl create`. */
@@ -303,6 +312,7 @@ class FixtureBuild(
           if [ "${'$'}n" = 1 ]; then echo "$UDID"; else printf '%s%02d\n' "${UDID.dropLast(2)}" "${'$'}n"; fi ;;
         "simctl bootstatus")
           cp '$RECORDS_DIR'/"${'$'}(cat '${root.resolve("pool-name").absolutePath}')".properties '${root.resolve("record-after-create.properties").absolutePath}' 2>/dev/null || true ;;
+        "simctl spawn") cat '${root.resolve("test-list.txt").absolutePath}' 2>/dev/null || true ;;
         "simctl list")
           case "${'$'}3 ${'$'}4" in
             "devices "*) cat '${root.resolve("devices.txt").absolutePath}' 2>/dev/null || true ;;

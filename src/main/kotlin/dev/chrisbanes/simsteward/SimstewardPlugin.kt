@@ -13,6 +13,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.configuration.BuildFeatures
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
@@ -32,6 +33,7 @@ import org.jetbrains.kotlin.konan.target.Family
 
 abstract class SimstewardPlugin @Inject constructor(
   private val buildEvents: BuildEventsListenerRegistry,
+  private val buildFeatures: BuildFeatures,
 ) : Plugin<Project> {
   override fun apply(target: Project) = with(target) {
     pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
@@ -47,6 +49,7 @@ abstract class SimstewardPlugin @Inject constructor(
       extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
       extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(false))
       extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map(::parseMaxSimulators).orElse(2))
+      extension.testShards.convention(providers.gradleProperty("simsteward.testShards").map(::parseTestShards).orElse(1))
       Platform.entries.forEach { platform ->
         val settings = extension.of(platform)
         listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime)
@@ -72,6 +75,7 @@ abstract class SimstewardPlugin @Inject constructor(
       // Deferred so that the project's own `simsteward {}` block has run.
       afterEvaluate {
         if (!extension.enabled.get()) return@afterEvaluate
+        val shards = configureShards(extension.testShards.get(), buildFeatures.configurationCache.requested.getOrElse(false))
         tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
           val name = "$NAME_PREFIX-$buildRootHash${task.path}"
           // Task completion events name tasks by their build-tree path, which differs from task.path in an included build.
@@ -95,6 +99,8 @@ abstract class SimstewardPlugin @Inject constructor(
           val resolvedState = layout.buildDirectory.file("simsteward/${task.name}/resolved-identifiers.properties")
           task.localState.register(resolvedState)
           task.outputs.upToDateWhen(ResolvedSpecUpToDate(leases, families, extension, xcrun, simslim, projectDir, resolvedState.get().asFile))
+          // Registered before the lease's doFirst, so it runs after the lease is taken.
+          shards[task.name]?.let { task.doFirst(ShardAction(leases, key, xcrun, it)) }
           task.doFirst(
             LeaseAction(
               leases,
