@@ -171,13 +171,23 @@ class ShardingTest {
   }
 
   @Test
-  fun shardsKeepTheOriginalsExclusions() {
+  fun shardsKeepTheOriginalsExclusionsAndFailurePolicy() {
     val build = sharded(2)
-    build.appendToLib("tasks.named<KotlinNativeSimulatorTest>(\"iosSimulatorArm64Test\") { filter.excludeTestsMatching(\"b.B\") }")
+    build.appendToLib(
+      """
+      tasks.named<KotlinNativeSimulatorTest>("iosSimulatorArm64Test") {
+        filter.excludeTestsMatching("b.B")
+        ignoreFailures = true
+      }
+      """,
+    )
 
-    build.build(original)
+    val result = build.build(original)
 
-    (1..2).forEach { index -> assertTrue("shard-exclude ${shard(index)} [b.B]" in build.commands(), build.commands().toString()) }
+    (1..2).forEach { index ->
+      assertTrue("shard-exclude ${shard(index)} [b.B]" in build.commands(), build.commands().toString())
+      assertTrue(Regex("fixture: ${Regex.escape(shard(index))} .* ignoreFailures=true").containsMatchIn(result.output), result.output)
+    }
   }
 
   @Test

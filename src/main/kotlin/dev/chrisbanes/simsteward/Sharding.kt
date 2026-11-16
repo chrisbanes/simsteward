@@ -43,9 +43,11 @@ internal fun Project.configureShards(count: Int, configurationCache: Boolean): M
       tasks.named(name, KotlinNativeSimulatorTest::class.java).also { shard ->
         shard.configure {
           it.group = null
-          // Shards stand in for the original, so they keep its switch and exclusions. Its onlyIf predicates have no public reader.
+          // Shards stand in for the original, so they keep its switch, failure policy and exclusions. Its onlyIf
+          // predicates have no public reader.
           val from = original.get()
           it.enabled = from.enabled
+          it.ignoreFailures = from.ignoreFailures
           it.filter.setExcludePatterns(*from.filter.excludePatterns.toTypedArray())
         }
       }

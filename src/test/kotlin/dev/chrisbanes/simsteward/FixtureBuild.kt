@@ -103,7 +103,7 @@ class FixtureBuild(
         doFirst {
           var ordinal = 0
           val deviceName = runCatching { device.get() }.getOrNull()
-          println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
+          println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled ignoreFailures=${'$'}ignoreFailures")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
           if (filter.includePatterns.isNotEmpty()) File("${commandLog.absolutePath}").appendText("shard-filter ${'$'}path ${'$'}{filter.includePatterns.sorted()}\n")
           if (filter.excludePatterns.isNotEmpty()) File("${commandLog.absolutePath}").appendText("shard-exclude ${'$'}path ${'$'}{filter.excludePatterns.sorted()}\n")
