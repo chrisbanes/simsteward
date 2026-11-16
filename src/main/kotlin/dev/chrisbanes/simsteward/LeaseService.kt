@@ -17,6 +17,7 @@ import org.gradle.process.ExecOperations
 import org.gradle.tooling.events.FinishEvent
 import org.gradle.tooling.events.OperationCompletionListener
 import org.gradle.tooling.events.task.TaskFinishEvent
+import org.gradle.tooling.events.task.TaskSuccessResult
 
 /** Everything that makes two managed simulators interchangeable. */
 internal data class SimulatorSpec(
@@ -57,7 +58,8 @@ internal abstract class LeaseService :
     mapOf("pid" to owner.pid().toString(), "startTime" to start.toString()) +
       listOfNotNull(readOwnerStartSeconds(exec, owner.pid())?.takeIf { it == start / 1000 }?.let { "ownerStartTimeSeconds" to it.toString() }).toMap()
   }
-  private val specs = ConcurrentHashMap<SpecKey, SimulatorSpec>()
+  private val specs = ConcurrentHashMap<SpecKey, Result<SimulatorSpec>>()
+  private val pending = mutableMapOf<String, Pair<File, Map<String, String>>>()
 
   private val created = mutableListOf<ManagedSimulator>()
   private val pools = mutableMapOf<SimulatorSpec, MutableList<ManagedSimulator>>()
@@ -73,8 +75,8 @@ internal abstract class LeaseService :
   internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String, slimming: Slimming): SimulatorSpec =
     // Slimming is not part of the key, so projects that differ only in it still share one `simctl list`.
     specs.computeIfAbsent(SpecKey(platform, runtime, deviceType, xcrun)) {
-      resolveSpec(platform, { simctl(xcrun, "list", "-j", "runtimes") }, runtime, deviceType, xcrun, slimming)
-    }.copy(slimming = slimming)
+      runCatching { resolveSpec(platform, { simctl(xcrun, "list", "-j", "runtimes") }, runtime, deviceType, xcrun, slimming) }
+    }.getOrThrow().copy(slimming = slimming)
 
   /**
    * Leases a simulator from [spec]'s pool to [taskPath] and renames it to [name], growing the pool
@@ -147,9 +149,25 @@ internal abstract class LeaseService :
     }
   }
 
+  internal fun stage(taskPath: String, file: File, spec: SimulatorSpec) {
+    synchronized(lock) { pending[taskPath] = file to spec.identifiers() }
+  }
+
   /** Gradle delivers these off-thread and late, so tasks normally return their lease first. */
   override fun onFinish(event: FinishEvent) {
-    if (event is TaskFinishEvent) release(event.descriptor.taskPath)
+    if (event is TaskFinishEvent) {
+      val path = event.descriptor.taskPath
+      val state = synchronized(lock) { pending.remove(path) }
+      try {
+        val result = event.result
+        if (state != null && result is TaskSuccessResult && !result.isUpToDate && !result.isFromCache) {
+          runCatching { writeRecord(state.first, state.second) }
+            .onFailure { logger.warn("Could not save resolved identifiers for $path at ${state.first}: ${it.message}") }
+        }
+      } finally {
+        release(path)
+      }
+    }
   }
 
   override fun close(): Unit = synchronized(lock) {
@@ -282,3 +300,5 @@ internal abstract class LeaseService :
     val logger = Logging.getLogger(LeaseService::class.java)
   }
 }
+
+internal fun SimulatorSpec.identifiers(): Map<String, String> = mapOf("runtime" to runtime, "deviceType" to deviceType)
