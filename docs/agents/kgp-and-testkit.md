@@ -28,6 +28,24 @@ need to avoid a real simulator. The real simulator smoke test covers behavior
 that the fake action cannot, including KGP finding the leased simulator by its
 task name.
 
+## Shards
+
+With `testShards > 1` and the configuration cache requested, simsteward creates KGP test runs
+`shard1`…`shardN` on each simulator target from its debug test binary, in its `afterEvaluate`.
+KGP registers each as an ordinary `KotlinNativeSimulatorTest` (and adds it to `allTests`), so the
+per-task lease configuration applies unchanged. A shard's partition action is registered just
+before the lease's `doFirst`, so it runs after the lease and before KGP's test action: it lists
+classes with `simctl spawn <device> <binary> --ktest_list_tests` and sets the shard's include filter.
+The original task depends on its shards through a provider that Gradle resolves after applying
+`--tests`; a filtered run schedules no shards, and the original's `onlyIf` runs it only then.
+Gradle's public filter API hides `--tests` patterns, so simsteward reads
+`DefaultTestFilter.getCommandLineIncludePatterns()`. The combined `TestReport` uses location-only
+providers and `mustRunAfter`, not dependencies, so a failing shard still finalizes into it.
+
+In fixtures, the fake `xcrun` answers `simctl spawn` from `FixtureBuild.listTestClasses`, and the
+fake test action records `shard-filter <task> <patterns>`. `setExecutionSourceFrom` points a shard at
+the link output, so the fixture re-applies its fake executable after evaluation.
+
 ## Task inputs and simulator resolution
 
 Simsteward registers the configured device type and runtime as optional task

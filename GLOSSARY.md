@@ -39,6 +39,10 @@ The managed simulators of one simulator spec within one build. A pool grows only
 One test task's exclusive use of one managed simulator from a pool, from the moment the task starts until it finishes or fails.
 _Avoid_: Checkout, borrow, acquire
 
+**Shard**:
+One of N tasks a simulator test task is split into, each holding its own lease and running a deterministic share of the test classes.
+_Avoid_: Fork, partition, split task
+
 ## Recovery
 
 **Orphan**:

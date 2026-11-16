@@ -97,6 +97,57 @@ class RealSimulatorSmokeTest {
     assertEquals(emptyList(), managedSimulators(), "managed simulators remain after the run")
   }
 
+  @Test
+  fun shardsSplitRealTestClassesAcrossParallelSlimSimulators() {
+    assertEquals(emptyList(), managedSimulators(), "managed simulators exist before the run")
+    writeFixture()
+    listOf("AlphaTest", "BetaTest").forEach { name ->
+      directory.resolve("lib/src/commonTest/kotlin/$name.kt").writeText(
+        """
+        import kotlin.test.Test
+        import kotlin.test.assertEquals
+        class $name {
+          @Test fun runs() = assertEquals(2, 1 + 1)
+        }
+        """.trimIndent(),
+      )
+    }
+    directory.resolve("lib/build.gradle.kts").appendText(
+      """
+
+      extensions.configure<dev.chrisbanes.simsteward.SimstewardExtension>("simsteward") { testShards.set(2) }
+      tasks.matching { "Shard" in it.name && it.name.endsWith("Test") }.configureEach {
+        doFirst { println("window ${'$'}path start ${'$'}{System.currentTimeMillis()}") }
+        doLast { println("window ${'$'}path end ${'$'}{System.currentTimeMillis()}") }
+      }
+      """.trimIndent(),
+    )
+    runner().withArguments(":lib:linkDebugTestIosSimulatorArm64", "--no-scan", "--stacktrace").build()
+
+    val result = runner().build()
+
+    val shards = (1..2).map { ":lib:iosSimulatorArm64Shard${it}Test" }
+    shards.forEach { assertEquals(TaskOutcome.SUCCESS, result.task(it)?.outcome, result.output) }
+    assertEquals(TaskOutcome.SKIPPED, result.task(task)?.outcome, result.output)
+    // Sorted classes dealt in turn: AlphaTest, BetaTest, SmokeTest.
+    fun classes(index: Int) = directory.resolve("lib/build/test-results/iosSimulatorArm64Shard${index}Test")
+      .listFiles { f -> f.extension == "xml" }.orEmpty()
+      .flatMap { Regex("""<testcase name="[^"]+" classname="([^"]+)"""").findAll(it.readText()).map { m -> m.groupValues[1] }.toList() }
+      .toSet()
+    assertEquals(setOf("AlphaTest", "SmokeTest"), classes(1))
+    assertEquals(setOf("BetaTest"), classes(2))
+    // The shards' task windows overlap, so they ran in parallel.
+    val windows = shards.map { shard ->
+      fun at(edge: String) = Regex("window ${Regex.escape(shard)} $edge (\\d+)").find(result.output)!!.groupValues[1].toLong()
+      at("start")..at("end")
+    }
+    assertTrue(windows[0].first < windows[1].last && windows[1].first < windows[0].last, windows.toString())
+    val report = directory.resolve("lib/build/reports/tests/iosSimulatorArm64Test").walk().filter { it.extension == "html" }
+      .joinToString { it.readText() }
+    listOf("AlphaTest", "BetaTest", "SmokeTest").forEach { assertTrue(it in report, "$it missing from the combined report") }
+    assertEquals(emptyList(), managedSimulators(), "managed simulators remain after the run")
+  }
+
   private fun runner() = GradleRunner.create()
     .withProjectDir(directory)
     .withTestKitDir(File(System.getProperty("simsteward.testKitDir")))
