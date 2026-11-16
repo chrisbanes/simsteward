@@ -97,7 +97,7 @@ class IosSimulatorTestTaskTest {
   }
 
   @Test
-  fun unpinnedSettingsAreNotResolvedThroughSimctlWhenFingerprinting() {
+  fun unpinnedSettingsAreResolvedDuringUpToDateCheck() {
     val build = FixtureBuild(directory, pinned = false)
     build.build(task)
     build.clearCommands()
@@ -105,7 +105,7 @@ class IosSimulatorTestTaskTest {
     val result = build.build(task)
 
     assertEquals(TaskOutcome.UP_TO_DATE, result.task(task)?.outcome)
-    assertEquals(emptyList(), build.commands())
+    assertEquals(listOf("xcrun simctl list -j runtimes"), build.commands())
   }
 
   @Test

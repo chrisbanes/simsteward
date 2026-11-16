@@ -33,13 +33,13 @@ task name.
 Simsteward registers the configured device type and runtime as optional task
 inputs only when they are pinned. It also registers the slimming setting and
 the optional profile file contents (without making its path part of the task
-identity). Defaults are resolved when the lease starts, using
+identity). Defaults are resolved during execution, using
 `simctl list -j runtimes`: simsteward chooses the newest available runtime for
 the platform and a supported device type. Pin both values to avoid this
 resolution command. See [ADR 0003](../adr/0003-unpinned-specs-reresolve.md)
-for the intended up-to-date behavior for unpinned values. The implementation
-currently does not re-resolve unpinned values during Gradle's up-to-date check;
-the ADR's stated rerun behavior is therefore not yet delivered.
+for the intended up-to-date behavior for unpinned values. During the up-to-date check, unpinned identifiers are resolved and compared with
+task-local state from the last successful execution. A changed identifier or a
+resolution failure causes the task to run; fully pinned tasks need no listing.
 
 The managed simulator is slim by default. Simsteward runs `simslim on` and
 `simslim verify` with the optional profile before leasing it. With slimming

@@ -16,6 +16,7 @@ import org.gradle.api.Task
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
+import org.gradle.api.specs.Spec
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.PathSensitivity
@@ -96,6 +97,9 @@ abstract class SimstewardPlugin @Inject constructor(
             .withPropertyName("simsteward.profile")
             .withPathSensitivity(PathSensitivity.NONE)
             .optional()
+          val resolvedState = layout.buildDirectory.file("simsteward/${task.name}/resolved-identifiers.properties")
+          task.localState.register(resolvedState)
+          task.outputs.upToDateWhen(ResolvedSpecUpToDate(leases, families, extension, xcrun, simslim, projectDir, resolvedState.get().asFile))
           task.doFirst(
             LeaseAction(
               leases,
@@ -106,6 +110,7 @@ abstract class SimstewardPlugin @Inject constructor(
               simslim,
               projectDir,
               Ownership(recordsDir, buildRoot),
+              resolvedState.get().asFile,
             ),
           )
           task.doLast(ReleaseAction(leases))
@@ -141,6 +146,7 @@ private class LeaseAction(
   private val simslim: Provider<String>,
   private val projectDir: File,
   private val ownership: Ownership,
+  private val resolvedState: File,
 ) : Action<Task> {
   override fun execute(task: Task) {
     task as KotlinNativeSimulatorTest
@@ -149,13 +155,15 @@ private class LeaseAction(
     val service = leases.get()
     val settings = extension.of(platform)
     val slimming = Slimming(extension.slim.get(), simslim.get(), settings.profile.orNull?.let { projectDir.resolve(it).absolutePath })
+    val spec = service.resolve(platform, settings.runtime.orNull, settings.deviceType.orNull, xcrun.get(), slimming)
     service.lease(
       task.path,
       name,
-      service.resolve(platform, settings.runtime.orNull, settings.deviceType.orNull, xcrun.get(), slimming),
+      spec,
       ownership,
       checkMaxSimulators(extension.maxSimulators.get()),
     )
+    if (settings.runtime.orNull == null || settings.deviceType.orNull == null) service.stage(task.path, resolvedState, spec)
     // Added at execution, so the listener never enters the configuration cache.
     task.addTestListener(object : TestListener {
       override fun beforeSuite(suite: TestDescriptor) = Unit
@@ -165,6 +173,30 @@ private class LeaseAction(
         if (suite.parent == null) service.release(task.path)
       }
     })
+  }
+}
+
+private class ResolvedSpecUpToDate(
+  private val leases: Provider<LeaseService>,
+  private val families: Provider<Map<String, Family>>,
+  private val extension: SimstewardExtension,
+  private val xcrun: Provider<String>,
+  private val simslim: Provider<String>,
+  private val projectDir: File,
+  private val state: File,
+) : Spec<Task> {
+  override fun isSatisfiedBy(task: Task): Boolean {
+    task as KotlinNativeSimulatorTest
+    val platform = task.targetName?.let { families.get()[it] }?.let(Platform::of) ?: return true
+    val settings = extension.of(platform)
+    val runtime = settings.runtime.orNull
+    val deviceType = settings.deviceType.orNull
+    if (runtime != null && deviceType != null) return true
+    val slimming = Slimming(extension.slim.get(), simslim.get(), settings.profile.orNull?.let { projectDir.resolve(it).absolutePath })
+    return runCatching {
+      val spec = leases.get().resolve(platform, runtime, deviceType, xcrun.get(), slimming)
+      readRecord(state) == spec.identifiers()
+    }.getOrDefault(false)
   }
 }
 
