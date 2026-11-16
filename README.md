@@ -81,11 +81,17 @@ A relative `profile` path resolves against the build's root directory when it is
 
 ### Pinning
 
-When the device type or runtime is not pinned, simsteward picks the newest installed runtime for the platform and a device type that runtime supports. Pin both by identifier to keep a test task on a fixed simulator, whatever Xcode installs.
+When the device type or runtime is not pinned, simsteward picks the newest installed runtime for the platform and a device type that runtime supports. An unpinned task is not up to date once the pick changes, so installing a newer runtime reruns its tests on the next build.
 
-An unpinned task is not up to date once the pick changes, so installing a newer runtime reruns its tests on the next build.
+Pin both to keep a test task on a fixed simulator. A pin is either the name or the identifier that `xcrun simctl list runtimes` and `xcrun simctl list devicetypes` show:
 
-A pin is either the name or the identifier that `xcrun simctl list runtimes` and `xcrun simctl list devicetypes` show, such as `iPhone 16` or `com.apple.CoreSimulator.SimDeviceType.iPhone-16`. Identifiers stay unambiguous when two installed runtimes share a name, and pinning both by identifier also skips the `simctl` lookup before each test task. A name pin is looked up on every build, so a task pinned by name reruns if the name comes to mean a different identifier.
+| | Name | Identifier |
+|---|---|---|
+| Example | `iPhone 16`, `iOS 18.2` | `com.apple.CoreSimulator.SimDeviceType.iPhone-16`, `com.apple.CoreSimulator.SimRuntime.iOS-18-2` |
+| Before each test task | Looked up with `simctl`; the task reruns if the name comes to mean a different identifier | No lookup when both pins are identifiers |
+| Two installed runtimes share the name | Runtimes that do not support the device type are ignored; if several remain, the task fails and names their identifiers | Never ambiguous |
+
+Names are easier to read; identifiers keep a task on exactly one simulator whatever Xcode installs. Either way, simsteward pools simulators by identifier, so a name pin and an identifier pin for the same simulator share one pool.
 
 ## Slim and stock simulators
 
