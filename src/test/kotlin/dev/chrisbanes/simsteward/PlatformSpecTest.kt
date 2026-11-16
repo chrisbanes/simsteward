@@ -92,9 +92,14 @@ class PlatformSpecTest {
       assertTrue("No installed iOS simulator runtime" in message, message)
     }
     val shared = row("first", "27.2") + ("name" to "iOS 27.2")
-    val json = JsonOutput.toJson(mapOf("runtimes" to listOf(shared, shared + ("identifier" to "second"), shared + ("buildversion" to "other"))))
-    val message = assertFailsWith<GradleException> { resolveIos("iOS 27.2", null, json) }.message.orEmpty()
-    for (text in listOf("iOS 27.2", "matches several", "first, second", "simsteward.ios.runtime")) assertTrue(text in message, message)
+    val other = shared + ("identifier" to "other") +
+      ("supportedDeviceTypes" to listOf(mapOf("identifier" to "$dt.Other", "name" to "Other", "productFamily" to "other")))
+    fun json(vararg rows: Map<String, Any?>) = JsonOutput.toJson(mapOf("runtimes" to rows.toList()))
+    val ambiguous = json(shared, shared + ("identifier" to "second"), shared + ("buildversion" to "build"), other)
+    val message = assertFailsWith<GradleException> { resolveIos("iOS 27.2", null, ambiguous) }.message.orEmpty()
+    for (text in listOf("iOS 27.2", "matches several", "first, second.", "simsteward.ios.runtime")) assertTrue(text in message, message)
+    assertEquals(listOf("$dt.Other", "other") to true, resolveIos("iOS 27.2", "Other", ambiguous))
+    assertEquals(listOf("$dt.Device", "first") to true, resolveIos("iOS 27.2", "$dt.Device", json(shared, other)))
     assertEquals(listOf("$dt.Device", "first") to true, resolveIos("iOS 27.2", null, JsonOutput.toJson(mapOf("runtimes" to listOf(shared, shared + ("buildversion" to "other"))))))
   }
 

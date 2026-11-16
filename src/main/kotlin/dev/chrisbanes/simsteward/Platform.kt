@@ -43,15 +43,6 @@ internal fun resolveSpec(
     .map { it as Map<*, *> }
     .filter { it["platform"] == platform.simctlName && it["isAvailable"] == true }
     .filter { runtime == null || matches(it, runtime) }
-  if (runtime != null) {
-    val matched = runtimes.map { it["identifier"] as String }.distinct().sorted()
-    if (matched.size > 1) {
-      throw GradleException(
-        "${platform.simctlName} runtime '$runtime' matches several installed runtimes: ${matched.joinToString()}. " +
-          "Set simsteward.${platform.property}.runtime to one of these identifiers in gradle.properties.",
-      )
-    }
-  }
   fun supported(r: Map<*, *>) = (r["supportedDeviceTypes"] as List<*>).map { it as Map<*, *> }
     .filter { deviceType?.let { pinned -> matches(it, pinned) } ?: (it["productFamily"] == platform.productFamily) }
     .map { it["identifier"] as String }
@@ -69,6 +60,14 @@ internal fun resolveSpec(
   }
   val eligible = runtimes.filter { supported(it).isNotEmpty() }
   val candidates = if (runtime != null) {
+    // A name may match several runtimes; only those supporting the device type can be ambiguous.
+    val matched = eligible.map { it["identifier"] as String }.distinct().sorted()
+    if (matched.size > 1) {
+      throw GradleException(
+        "${platform.simctlName} runtime '$runtime' matches several installed runtimes: ${matched.joinToString()}. " +
+          "Set simsteward.${platform.property}.runtime to one of these identifiers in gradle.properties.",
+      )
+    }
     eligible
   } else {
     val ordered = eligible.map { it to version(it) }.sortedWith(compareBy(newestFirst) { it.second })
