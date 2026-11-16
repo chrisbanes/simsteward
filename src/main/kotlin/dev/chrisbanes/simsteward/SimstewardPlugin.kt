@@ -13,6 +13,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.configuration.BuildFeatures
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
@@ -32,6 +33,7 @@ import org.jetbrains.kotlin.konan.target.Family
 
 abstract class SimstewardPlugin @Inject constructor(
   private val buildEvents: BuildEventsListenerRegistry,
+  private val buildFeatures: BuildFeatures,
 ) : Plugin<Project> {
   override fun apply(target: Project) = with(target) {
     pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
@@ -46,7 +48,8 @@ abstract class SimstewardPlugin @Inject constructor(
       val extension = extensions.create("simsteward", SimstewardExtension::class.java)
       extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
       extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(false))
-      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map(::parseMaxSimulators).orElse(2))
+      extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map { parseCount("maxSimulators", it) }.orElse(2))
+      extension.testShards.convention(providers.gradleProperty("simsteward.testShards").map { parseCount("testShards", it) }.orElse(1))
       Platform.entries.forEach { platform ->
         val settings = extension.of(platform)
         listOf("deviceType" to settings.deviceType, "runtime" to settings.runtime)
@@ -72,6 +75,7 @@ abstract class SimstewardPlugin @Inject constructor(
       // Deferred so that the project's own `simsteward {}` block has run.
       afterEvaluate {
         if (!extension.enabled.get()) return@afterEvaluate
+        val shards = configureShards(extension.testShards.get(), buildFeatures.configurationCache.active.getOrElse(false))
         tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
           val name = "$NAME_PREFIX-$buildRootHash${task.path}"
           // Task completion events name tasks by their build-tree path, which differs from task.path in an included build.
@@ -95,6 +99,12 @@ abstract class SimstewardPlugin @Inject constructor(
           val resolvedState = layout.buildDirectory.file("simsteward/${task.name}/resolved-identifiers.properties")
           task.localState.register(resolvedState)
           task.outputs.upToDateWhen(ResolvedSpecUpToDate(leases, families, extension, xcrun, simslim, projectDir, resolvedState.get().asFile))
+          // Registered before the lease's doFirst, so it runs after the lease is taken.
+          shards[task.name]?.let { shard ->
+            // The share depends on both, so a changed count reruns every shard rather than leaving stale shares up to date.
+            task.inputs.property("simsteward.shard", "${shard.index}/${shard.count}")
+            task.doFirst(ShardAction(leases, xcrun, shard))
+          }
           task.doFirst(
             LeaseAction(
               leases,
@@ -158,7 +168,7 @@ private class LeaseAction(
       name,
       spec,
       ownership,
-      checkMaxSimulators(extension.maxSimulators.get()),
+      checkAtLeastOne("maxSimulators", extension.maxSimulators.get()),
     )
     if (settings.runtime.orNull == null || settings.deviceType.orNull == null) service.stage(key, resolvedState, spec)
     // Added at execution, so the listener never enters the configuration cache.
@@ -201,12 +211,13 @@ private class ReleaseAction(private val leases: Provider<LeaseService>, private 
   override fun execute(task: Task) = leases.get().release(key)
 }
 
-private fun parseMaxSimulators(text: String): Int =
-  text.toIntOrNull() ?: throw GradleException("simsteward.maxSimulators must be a whole number, but was '$text'.")
+/** Parses the `simsteward.<name>` property; the range is checked when the value is read, see [checkAtLeastOne]. */
+internal fun parseCount(name: String, text: String): Int =
+  text.toIntOrNull() ?: throw GradleException("simsteward.$name must be a whole number, but was '$text'.")
 
-/** The one place a cap is range-checked, when it is read, whether it came from the property or the extension. */
-private fun checkMaxSimulators(value: Int): Int =
-  value.also { if (it < 1) throw GradleException("maxSimulators must be at least 1, but was $it.") }
+/** The one place a count is range-checked, when it is read, whether it came from the property or the extension. */
+internal fun checkAtLeastOne(name: String, value: Int): Int =
+  value.also { if (it < 1) throw GradleException("$name must be at least 1, but was $it.") }
 
 internal const val NAME_PREFIX = "simsteward"
 

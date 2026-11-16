@@ -16,6 +16,7 @@ package dev.chrisbanes.simsteward {
     method @InaccessibleFromKotlin @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings getIos();
     method @InaccessibleFromKotlin public abstract org.gradle.api.provider.Property<java.lang.Integer> getMaxSimulators();
     method @InaccessibleFromKotlin public abstract org.gradle.api.provider.Property<java.lang.Boolean> getSlim();
+    method @InaccessibleFromKotlin public abstract org.gradle.api.provider.Property<java.lang.Integer> getTestShards();
     method @InaccessibleFromKotlin @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings getTvos();
     method @InaccessibleFromKotlin @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings getWatchos();
     method public final void ios(org.gradle.api.Action<dev.chrisbanes.simsteward.PlatformSettings> action);
@@ -25,12 +26,13 @@ package dev.chrisbanes.simsteward {
     property @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings ios;
     property public abstract org.gradle.api.provider.Property<java.lang.Integer> maxSimulators;
     property public abstract org.gradle.api.provider.Property<java.lang.Boolean> slim;
+    property public abstract org.gradle.api.provider.Property<java.lang.Integer> testShards;
     property @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings tvos;
     property @org.gradle.api.tasks.Nested public abstract dev.chrisbanes.simsteward.PlatformSettings watchos;
   }
 
   public abstract class SimstewardPlugin implements org.gradle.api.Plugin<org.gradle.api.Project> {
-    ctor @javax.inject.Inject public SimstewardPlugin(org.gradle.build.event.BuildEventsListenerRegistry buildEvents);
+    ctor @javax.inject.Inject public SimstewardPlugin(org.gradle.build.event.BuildEventsListenerRegistry buildEvents, org.gradle.api.configuration.BuildFeatures buildFeatures);
     method public void apply(org.gradle.api.Project target);
   }
 

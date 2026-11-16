@@ -66,6 +66,7 @@ The `simsteward {}` block only configures the project it is in. A block in the r
 | `simsteward.enabled` | `enabled` | `true` | `false` leaves this project's test tasks as Kotlin configures them. |
 | `simsteward.slim` | `slim` | `false` | Slims new managed simulators with SimSlim. |
 | `simsteward.maxSimulators` | `maxSimulators` | `2` | The most simulators one pool may hold. Must be at least 1. |
+| `simsteward.testShards` | `testShards` | `1` | Splits each simulator test task into this many shards; see [Test shards](#test-shards). Must be at least 1. |
 | `simsteward.<platform>.deviceType` | `<platform> { deviceType }` | unset | Pins the device type identifier. |
 | `simsteward.<platform>.runtime` | `<platform> { runtime }` | unset | Pins the runtime identifier. |
 | `simsteward.<platform>.profile` | `<platform> { profile }` | unset | Path to the SimSlim profile for slim simulators. |
@@ -113,6 +114,22 @@ Slim and stock simulators, and slim simulators with different profiles, never sh
 **Another simulator has the task's name**: `simctl` cannot tell two simulators with the same name apart, so the task fails rather than risk testing on the wrong one. This usually means another build of the same checkout is running that task; wait for it to finish. Otherwise, delete or rename the simulator the error names.
 
 **A simulator cannot be deleted at the end of the build**: simsteward reports the failure and keeps the simulator's record, so a later build reaps it as an orphan.
+
+## Test shards
+
+A module with a large simulator test suite can split each simulator test task across several managed simulators:
+
+```kotlin
+simsteward {
+  testShards.set(4)
+}
+```
+
+`testShards` (or the `simsteward.testShards` property; default 1, off) splits each simulator test task in the project into that many shard tasks, such as `iosSimulatorArm64Shard1Test`. Each shard leases its own simulator, lists the test binary's classes, and runs every Nth class in sorted order. `iosSimulatorArm64Test` runs its shards instead of its own tests, so `iosSimulatorArm64Test`, `allTests` and `check` work unchanged. `maxSimulators` still caps how many shards run at once; the rest wait for a returned lease. With `--tests`, the original task runs alone, as it does from the IDE.
+
+The original task runs no tests of its own, so `--rerun` or `clean<Task>` on it reruns nothing; use `--rerun-tasks` or clean the shard tasks. Shards copy the original task's `enabled`, `ignoreFailures` and exclude filters when they are created. Anything else set only on the original, such as `onlyIf` conditions, `environment` or `testLogging`, does not reach them; configure `tasks.withType<KotlinNativeSimulatorTest>()` instead. A shard replaces any include filter set on it with its share. Requesting a filtered original together with `check` or `allTests` runs the shards as well.
+
+Each shard writes its own results under `build/test-results/<shard task>`, and a combined HTML report lands in the original task's report folder. Sharding needs the [configuration cache](https://docs.gradle.org/current/userguide/configuration_cache.html), because only then does Gradle run one project's tasks in parallel; without it, simsteward does not shard and says so.
 
 ## Orphaned simulators
 
