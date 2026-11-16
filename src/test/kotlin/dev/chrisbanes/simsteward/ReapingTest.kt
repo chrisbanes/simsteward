@@ -26,8 +26,8 @@ class ReapingTest {
   @Test
   fun recordExistsWhileBuildOwnsSimulatorAndIsRemovedAfterDeletion() {
     val build = FixtureBuild(directory)
-    // Stock, so the fake xcrun's bootstatus runs and snapshots the record after create.
-    build.build(task, "-Psimsteward.slim=false")
+    // Stock (the default), so the fake xcrun's bootstatus runs and snapshots the record after create.
+    build.build(task)
 
     val pool = build.poolName()
     val atCreate = readRecord(build.root.resolve("record-at-create.properties"))
@@ -138,37 +138,28 @@ class ReapingTest {
   }
 
   @Test
-  fun twoProjectExecutablesReapTheirOwnRecordsBeforeTheirFirstCreate() {
+  fun eachExecutableReapsOnlyItsOwnRecordsAndPointsAtTheOthers() {
     val build = FixtureBuild(directory)
-    build.addModule("second")
-    val firstXcrun = build.installXcrun("xcrun-first", "simsteward-routeone" to DEAD_UDID)
+    // The first listing shows both orphans: the second's must still survive it.
+    val firstXcrun = build.installXcrun("xcrun-first", "simsteward-routeone" to DEAD_UDID, "simsteward-routetwo" to OTHER_UDID)
     val secondXcrun = build.installXcrun("xcrun-second", "simsteward-routetwo" to OTHER_UDID)
-    build.localXcrun("lib", firstXcrun)
-    build.localXcrun("second", secondXcrun)
     val (pid, start) = deadProcess()
     val one = plant("simsteward-routeone", DEAD_UDID, pid, start, firstXcrun)
     val two = plant("simsteward-routetwo", OTHER_UDID, pid, start, secondXcrun)
-    // The first route's listing lacks the other orphan: it must retain that record for route two.
-    val args = arrayOf(task, ":second:iosSimulatorArm64Test", "-Psimsteward.slim=false", "--max-workers=1", "-Dorg.gradle.unsafe.isolated-projects=true", "--rerun-tasks")
-    build.build(*args)
+
+    val result = build.build(task, "-Psimsteward.xcrun=$firstXcrun")
 
     val commands = build.commands()
-    for ((label, udid) in listOf("xcrun-first" to DEAD_UDID, "xcrun-second" to OTHER_UDID)) {
-      assertTrue(commands.indexOf("$label simctl delete $udid") in 0 until commands.indexOfFirst { it.startsWith("$label simctl create ") }, "$commands")
-      val snapshot = readRecord(build.root.resolve("record-at-create-$label.properties"))
-      assertEquals(build.root.resolve("bin/$label").absolutePath, snapshot["xcrun"])
-      assertEquals(snapshot["xcrun"], readRecord(build.root.resolve("record-after-create-$label.properties"))["xcrun"])
-    }
-    assertFalse(commands.contains("xcrun-first simctl delete $OTHER_UDID"))
-    assertFalse(commands.contains("xcrun-second simctl delete $DEAD_UDID"))
+    assertTrue(commands.indexOf("xcrun-first simctl delete $DEAD_UDID") in 0 until commands.indexOfFirst { it.startsWith("xcrun-first simctl create ") }, "$commands")
+    assertFalse("xcrun-first simctl delete $OTHER_UDID" in commands)
+    assertEquals(firstXcrun, readRecord(build.root.resolve("record-at-create-xcrun-first.properties"))["xcrun"])
     assertFalse(one.exists())
+    assertTrue(two.exists())
+    assertTrue("used xcrun $secondXcrun; run simstewardReap with -Psimsteward.xcrun=$secondXcrun." in result.output, result.output)
+
+    build.build(":lib:simstewardReap", "-Psimsteward.xcrun=$secondXcrun")
+    assertTrue("xcrun-second simctl delete $OTHER_UDID" in build.commands())
     assertFalse(two.exists())
-    build.clearCommands()
-    val again = build.build(*args)
-    assertTrue("Reusing configuration cache." in again.output, again.output)
-    for (label in listOf("xcrun-first", "xcrun-second")) {
-      assertEquals(1, build.commands().count { it.startsWith("$label simctl create ") })
-    }
   }
 
   @Test
@@ -180,6 +171,10 @@ class ReapingTest {
     val trace = record(snapshot.getValue("name")).also(planted::add)
     assertEquals(build.root.resolve("bin/xcrun").absolutePath, snapshot["xcrun"])
     assertEquals(null, snapshot["udid"])
+    assertTrue(trace.exists())
+    // The record's owner is the still-running TestKit daemon, so only a warning can point at it.
+    val sameDaemon = build.build(":lib:simstewardReap")
+    assertTrue("$trace belongs to this Gradle daemon" in sameDaemon.output, sameDaemon.output)
     assertTrue(trace.exists())
 
     val (pid, start) = deadProcess()
@@ -238,7 +233,7 @@ class ReapingTest {
   fun anotherBuildCannotReapAnActivelyHeldLease() {
     val holder = FixtureBuild(directory.resolve("holder"))
     val reaper = FixtureBuild(directory.resolve("reaper"))
-    val pending = CompletableFuture.supplyAsync { holder.build(task, "-Pfixture.holdLease", "-Psimsteward.slim=false") }
+    val pending = CompletableFuture.supplyAsync { holder.build(task, "-Pfixture.holdLease") }
     try {
       val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
       while (!holder.root.resolve("lease-ready").exists() && !pending.isDone) {

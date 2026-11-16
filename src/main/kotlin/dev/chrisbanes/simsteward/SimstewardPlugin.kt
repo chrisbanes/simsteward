@@ -40,12 +40,12 @@ abstract class SimstewardPlugin @Inject constructor(
 
       val buildRoot = layout.settingsDirectory.asFile.absolutePath
       val buildRootHash = sha256(buildRoot).take(8)
-      val xcrun = objects.property(String::class.java).convention(providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun"))
+      val xcrun = providers.gradleProperty("simsteward.xcrun").orElse("/usr/bin/xcrun")
       val simslim = providers.gradleProperty("simsteward.simslim").orElse("simslim")
 
       val extension = extensions.create("simsteward", SimstewardExtension::class.java)
       extension.enabled.convention(providers.gradleProperty("simsteward.enabled").map { it.toBoolean() }.orElse(true))
-      extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(true))
+      extension.slim.convention(providers.gradleProperty("simsteward.slim").map { it.toBoolean() }.orElse(false))
       extension.maxSimulators.convention(providers.gradleProperty("simsteward.maxSimulators").map(::parseMaxSimulators).orElse(2))
       Platform.entries.forEach { platform ->
         val settings = extension.of(platform)
@@ -71,16 +71,11 @@ abstract class SimstewardPlugin @Inject constructor(
       targets.withType(KotlinNativeTarget::class.java).configureEach { families.put(it.name, it.konanTarget.family) }
       // Deferred so that the project's own `simsteward {}` block has run.
       afterEvaluate {
-        if (extensions.extraProperties.has("simsteward.xcrun")) {
-          val local = extensions.extraProperties.get("simsteward.xcrun")
-          if (local !is String) throw GradleException("Project-local simsteward.xcrun must be a String executable path.")
-          xcrun.set(local)
-        }
-        // Snapshot configuration; task actions must not query mutable project properties.
-        xcrun.finalizeValue()
         if (!extension.enabled.get()) return@afterEvaluate
         tasks.withType(KotlinNativeSimulatorTest::class.java).configureEach { task ->
           val name = "$NAME_PREFIX-$buildRootHash${task.path}"
+          // Task completion events name tasks by their build-tree path, which differs from task.path in an included build.
+          val key = if (buildTreePath == ":") ":${task.name}" else "$buildTreePath:${task.name}"
           task.standalone.set(false)
           task.device.set(name)
           task.usesService(leases)
@@ -103,6 +98,7 @@ abstract class SimstewardPlugin @Inject constructor(
           task.doFirst(
             LeaseAction(
               leases,
+              key,
               name,
               families,
               extension,
@@ -113,7 +109,7 @@ abstract class SimstewardPlugin @Inject constructor(
               resolvedState.get().asFile,
             ),
           )
-          task.doLast(ReleaseAction(leases))
+          task.doLast(ReleaseAction(leases, key))
         }
       }
     }
@@ -139,6 +135,7 @@ internal abstract class ReapTask : DefaultTask() {
  */
 private class LeaseAction(
   private val leases: Provider<LeaseService>,
+  private val key: String,
   private val name: String,
   private val families: Provider<Map<String, Family>>,
   private val extension: SimstewardExtension,
@@ -157,20 +154,20 @@ private class LeaseAction(
     val slimming = Slimming(extension.slim.get(), simslim.get(), settings.profile.orNull?.let { projectDir.resolve(it).absolutePath })
     val spec = service.resolve(platform, settings.runtime.orNull, settings.deviceType.orNull, xcrun.get(), slimming)
     service.lease(
-      task.path,
+      key,
       name,
       spec,
       ownership,
       checkMaxSimulators(extension.maxSimulators.get()),
     )
-    if (settings.runtime.orNull == null || settings.deviceType.orNull == null) service.stage(task.path, resolvedState, spec)
+    if (settings.runtime.orNull == null || settings.deviceType.orNull == null) service.stage(key, resolvedState, spec)
     // Added at execution, so the listener never enters the configuration cache.
     task.addTestListener(object : TestListener {
       override fun beforeSuite(suite: TestDescriptor) = Unit
       override fun beforeTest(testDescriptor: TestDescriptor) = Unit
       override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) = Unit
       override fun afterSuite(suite: TestDescriptor, result: TestResult) {
-        if (suite.parent == null) service.release(task.path)
+        if (suite.parent == null) service.release(key)
       }
     })
   }
@@ -200,8 +197,8 @@ private class ResolvedSpecUpToDate(
   }
 }
 
-private class ReleaseAction(private val leases: Provider<LeaseService>) : Action<Task> {
-  override fun execute(task: Task) = leases.get().release(task.path)
+private class ReleaseAction(private val leases: Provider<LeaseService>, private val key: String) : Action<Task> {
+  override fun execute(task: Task) = leases.get().release(key)
 }
 
 private fun parseMaxSimulators(text: String): Int =

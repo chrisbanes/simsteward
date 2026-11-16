@@ -189,7 +189,7 @@ class FixtureBuild(
     )
   }
 
-  /** A separate command route with its own listing and snapshots, in the same consumer build. */
+  /** A separate `xcrun` with its own listing and snapshots, selected with `-Psimsteward.xcrun`. */
   fun installXcrun(name: String, vararg devices: Pair<String, String>): String {
     val listing = root.resolve("devices-$name.txt")
     listing.writeText("== Devices ==\n" + devices.joinToString("\n") { (device, udid) -> "    $device ($udid) (Shutdown)" })
@@ -199,12 +199,6 @@ class FixtureBuild(
         .replace("record-at-create.properties", "record-at-create-$name.properties")
         .replace("record-after-create.properties", "record-after-create-$name.properties"),
     )
-  }
-
-  /** Sets the explicit project override after plugin application and checks the executable actually wired. */
-  fun localXcrun(module: String, executable: String) {
-    appendTo(module, "extra[\"simsteward.xcrun\"] = \"$executable\"")
-    expectXcrun(module, executable)
   }
 
   /** A configuration-time guard: failure cannot run any simulator task or fall back to real xcrun. */

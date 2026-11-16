@@ -1,6 +1,6 @@
 # Simsteward
 
-Simsteward is a Gradle plugin for Kotlin Multiplatform builds. It gives the build's Apple simulator tests their own managed simulators: the build creates them, lends one to each test task as a lease, and deletes them when the build ends. Simulators are slimmed with SimSlim by default.
+Simsteward is a Gradle plugin for Kotlin Multiplatform builds. It gives the build's Apple simulator tests their own managed simulators: the build creates them, lends one to each test task as a lease, and deletes them when the build ends. Simulators can optionally be slimmed with SimSlim.
 
 ## Setup
 
@@ -31,7 +31,7 @@ The `simsteward {}` extension overrides, per project, the matching `simsteward.*
 
 ```kotlin
 simsteward {
-  slim.set(false)
+  slim.set(true)
   maxSimulators.set(3)
   ios {
     deviceType.set("<device type identifier>")
@@ -40,7 +40,13 @@ simsteward {
 }
 ```
 
-`enabled`, `slim` and `maxSimulators` default to `true`, `true` and `2`. `ios`, `tvos` and `watchos` each take `deviceType`, `runtime` and `profile`; unset values are chosen automatically.
+`enabled`, `slim` and `maxSimulators` default to `true`, `false` and `2`. `ios`, `tvos` and `watchos` each take `deviceType`, `runtime` and `profile`; unset values are chosen automatically.
+
+Slimming (`slim`, or the `simsteward.slim=true` property) needs [SimSlim](https://github.com/MobAI-App/simslim) (`brew install mobai-app/tap/simslim`). Two build-wide Gradle properties locate the tools when they are not on the Gradle daemon's `PATH` or at the default location: `simsteward.simslim` (default `simslim`) and `simsteward.xcrun` (default `/usr/bin/xcrun`).
+
+## Orphaned simulators
+
+If a build dies before deleting its simulators, the next build that leases one deletes them. To delete them without running tests, run `./gradlew simstewardReap`. Simulators owned by a Gradle daemon that is still running are left alone; stop it with `./gradlew --stop` first.
 
 ## Snapshots
 

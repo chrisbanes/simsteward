@@ -20,17 +20,7 @@ class SettingsTest {
   private val otherType = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
 
   @Test
-  fun projectLocalExecutableWinsOverGlobalAndCommandLineAndManualReapUsesIt() {
-    val build = FixtureBuild(directory)
-    val local = build.installXcrun("xcrun-local")
-    val cli = build.installXcrun("xcrun-cli")
-    build.localXcrun("lib", local)
-    build.build(":lib:simstewardReap", "-Psimsteward.xcrun=$cli")
-    assertEquals(listOf("xcrun-local simctl list devices"), build.commands())
-  }
-
-  @Test
-  fun executableKeepsGlobalCommandLineAndDefaultFallbacksWithoutLocalOverride() {
+  fun executableKeepsGlobalCommandLineAndDefaultFallbacks() {
     val build = FixtureBuild(directory)
     build.expectXcrun("lib", directory.resolve("bin/xcrun").absolutePath)
     build.build(":lib:simstewardReap")
@@ -48,15 +38,6 @@ class SettingsTest {
     defaults.expectXcrun("lib", "/usr/bin/xcrun")
     defaults.build("help") // Inspect configuration only; never execute the real default.
     assertEquals(emptyList(), defaults.commands())
-  }
-
-  @Test
-  fun nonScalarProjectLocalExecutableFailsDuringConfiguration() {
-    val build = FixtureBuild(directory)
-    build.appendToLib("extra[\"simsteward.xcrun\"] = providers.provider { \"not a scalar\" }")
-    val result = build.buildAndFail("help")
-    assertTrue("Project-local simsteward.xcrun must be a String executable path." in result.output, result.output)
-    assertEquals(emptyList(), build.commands())
   }
 
   @Test
@@ -109,7 +90,7 @@ class SettingsTest {
     build.simsteward("lib", "ios { profile.set(\"profile.json\") }")
     build.simsteward("lib2", "ios { profile.set(\"profile.json\") }")
 
-    build.build(lib, lib2, ":lib3:iosSimulatorArm64Test", "-Psimsteward.ios.profile=root.json", "--max-workers=1")
+    build.build(lib, lib2, ":lib3:iosSimulatorArm64Test", "-Psimsteward.ios.profile=root.json", "-Psimsteward.slim=true", "--max-workers=1")
 
     val ons = build.commands().filter { it.startsWith("simslim on ") }
     assertEquals(3, ons.size, ons.toString())

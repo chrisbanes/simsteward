@@ -36,7 +36,7 @@ class IosSimulatorTestTaskTest {
   @Test
   fun passingTaskLeasesOneManagedSimulatorThatIsDeletedAtTheEnd() {
     val build = FixtureBuild(directory)
-    val device = build.build(task, STOCK).fixtureLine().device
+    val device = build.build(task).fixtureLine().device
 
     assertLeaseLifecycle(build.commands(), device)
   }
@@ -44,7 +44,7 @@ class IosSimulatorTestTaskTest {
   @Test
   fun failingTaskStillReturnsLeaseAndDeletesSimulator() {
     val build = FixtureBuild(directory)
-    val result = build.buildAndFail(task, "-Pfixture.failTest", STOCK)
+    val result = build.buildAndFail(task, "-Pfixture.failTest")
 
     assertTrue("fixture test failure" in result.output)
     assertLeaseLifecycle(build.commands(), result.fixtureLine().device)
@@ -80,7 +80,7 @@ class IosSimulatorTestTaskTest {
     val build = FixtureBuild(directory)
     build.build(task)
 
-    assertEquals(TaskOutcome.SUCCESS, build.build(task, STOCK).task(task)?.outcome)
+    assertEquals(TaskOutcome.SUCCESS, build.build(task, SLIM).task(task)?.outcome)
   }
 
   @Test
@@ -124,7 +124,7 @@ class IosSimulatorTestTaskTest {
     val build = FixtureBuild(directory)
     build.failOn("simctl bootstatus")
 
-    val result = build.buildAndFail(task, STOCK)
+    val result = build.buildAndFail(task)
 
     val udid = FixtureBuild.UDID
     assertTrue("exit code 3" in result.output, result.output)
@@ -134,9 +134,9 @@ class IosSimulatorTestTaskTest {
   }
 
   @Test
-  fun slimByDefaultRunsOnThenVerifyBeforeFirstLeaseWithoutBootstatus() {
+  fun slimRunsOnThenVerifyBeforeFirstLeaseWithoutBootstatus() {
     val build = FixtureBuild(directory)
-    val device = build.build(task).fixtureLine().device
+    val device = build.build(task, SLIM).fixtureLine().device
 
     val udid = FixtureBuild.UDID
     val pool = poolName(build.commands())
@@ -159,7 +159,7 @@ class IosSimulatorTestTaskTest {
   @Test
   fun profileIsPassedToOnAndVerify() {
     val build = FixtureBuild(directory)
-    build.build(task, "-Psimsteward.ios.profile=/profiles/ios.json")
+    build.build(task, SLIM, "-Psimsteward.ios.profile=/profiles/ios.json")
 
     val udid = FixtureBuild.UDID
     val commands = build.commands()
@@ -168,11 +168,11 @@ class IosSimulatorTestTaskTest {
   }
 
   @Test
-  fun slimmingOffRunsNoSimslimAndWorksWithoutIt() {
+  fun stockByDefaultRunsNoSimslimAndWorksWithoutIt() {
     val build = FixtureBuild(directory)
     val missing = directory.resolve("no-such-simslim").absolutePath
 
-    build.build(task, STOCK, "-Psimsteward.simslim=$missing")
+    build.build(task, "-Psimsteward.simslim=$missing")
 
     assertTrue(build.commands().none { it.startsWith("simslim") }, "${build.commands()}")
   }
@@ -182,8 +182,10 @@ class IosSimulatorTestTaskTest {
     val build = FixtureBuild(directory)
     val missing = directory.resolve("no-such-simslim").absolutePath
 
-    build.buildAndFail(task, "-Psimsteward.simslim=$missing")
+    val result = build.buildAndFail(task, SLIM, "-Psimsteward.simslim=$missing")
 
+    assertTrue("Could not start $missing. Install SimSlim" in result.output, result.output)
+    assertTrue("set simsteward.simslim to its full path" in result.output, result.output)
     assertEquals("xcrun simctl delete ${FixtureBuild.UDID}", build.commands().last())
     assertTrue(build.commands().none { it.startsWith("test") })
   }
@@ -194,7 +196,7 @@ class IosSimulatorTestTaskTest {
       val build = FixtureBuild(directory.resolve(step))
       build.failOn(step)
 
-      val result = build.buildAndFail(task)
+      val result = build.buildAndFail(task, SLIM)
 
       assertTrue("exit code 3" in result.output, result.output)
       assertTrue("simslim: injected failure for $step ${FixtureBuild.UDID}" in result.output, result.output)
@@ -208,7 +210,7 @@ class IosSimulatorTestTaskTest {
       ?: error("First command is not a managed create: $commands")
 
   private companion object {
-    const val STOCK = "-Psimsteward.slim=false"
+    const val SLIM = "-Psimsteward.slim=true"
   }
 
   private fun assertLeaseLifecycle(commands: List<String>, device: String) {
