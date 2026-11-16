@@ -159,6 +159,28 @@ class ShardingTest {
   }
 
   @Test
+  fun disabledOriginalDisablesItsShards() {
+    val build = sharded(2)
+    build.appendToLib("tasks.named(\"iosSimulatorArm64Test\") { enabled = false }")
+
+    listOf(original, ":lib:allTests").forEach { entry ->
+      val result = build.build(entry)
+      (1..2).forEach { assertTrue(result.outcome(shard(it)) in setOf(null, TaskOutcome.SKIPPED), result.output) }
+    }
+    assertEquals(emptyList(), build.commands())
+  }
+
+  @Test
+  fun shardsKeepTheOriginalsExclusions() {
+    val build = sharded(2)
+    build.appendToLib("tasks.named<KotlinNativeSimulatorTest>(\"iosSimulatorArm64Test\") { filter.excludeTestsMatching(\"b.B\") }")
+
+    build.build(original)
+
+    (1..2).forEach { index -> assertTrue("shard-exclude ${shard(index)} [b.B]" in build.commands(), build.commands().toString()) }
+  }
+
+  @Test
   fun sharesCoverEveryClassOnceInSortedRoundRobin() {
     val build = sharded(3, "e.E", "a.A", "d.D", "b.B", "c.C")
 

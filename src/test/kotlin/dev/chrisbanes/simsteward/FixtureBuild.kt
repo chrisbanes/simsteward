@@ -106,6 +106,7 @@ class FixtureBuild(
           println("fixture: ${'$'}path device=${'$'}deviceName standalone=${'$'}{standalone.get()} enabled=${'$'}enabled")
           File("${commandLog.absolutePath}").appendText("test ${'$'}path\n")
           if (filter.includePatterns.isNotEmpty()) File("${commandLog.absolutePath}").appendText("shard-filter ${'$'}path ${'$'}{filter.includePatterns.sorted()}\n")
+          if (filter.excludePatterns.isNotEmpty()) File("${commandLog.absolutePath}").appendText("shard-exclude ${'$'}path ${'$'}{filter.excludePatterns.sorted()}\n")
           if (holdLease) {
             readyFile.writeText("ready")
             val deadline = System.nanoTime() + 60_000_000_000L

@@ -35,13 +35,21 @@ internal fun Project.configureShards(count: Int, configurationCache: Boolean): M
   }
   val shards = mutableMapOf<String, Shard>()
   targets.forEach { target ->
+    val original = tasks.named("${target.name}Test", KotlinNativeSimulatorTest::class.java)
     val shardTasks = (1..count).map { index ->
       target.testRuns.create("shard$index") { it.setExecutionSourceFrom(target.binaries.getTest(NativeBuildType.DEBUG)) }
       val name = "${target.name}Shard${index}Test"
       shards[name] = Shard(index, count)
-      tasks.named(name, KotlinNativeSimulatorTest::class.java).also { shard -> shard.configure { it.group = null } }
+      tasks.named(name, KotlinNativeSimulatorTest::class.java).also { shard ->
+        shard.configure {
+          it.group = null
+          // Shards stand in for the original, so they keep its switch and exclusions. Its onlyIf predicates have no public reader.
+          val from = original.get()
+          it.enabled = from.enabled
+          it.filter.setExcludePatterns(*from.filter.excludePatterns.toTypedArray())
+        }
+      }
     }
-    val original = tasks.named("${target.name}Test", KotlinNativeSimulatorTest::class.java)
     val report = tasks.register("${target.name}TestShardReport", TestReport::class.java) { report ->
       report.description = "Combines the reports of ${original.name}'s shards."
       // Location only: the original doesn't produce this report, so the report must not depend on it.
