@@ -27,7 +27,7 @@ Everything that makes two managed simulators interchangeable: platform, device t
 _Avoid_: Config, device spec
 
 **Pin**:
-A device type or runtime fixed in configuration for a platform, instead of the default simsteward picks: the newest installed runtime and a device type it supports.
+A device type or runtime fixed in configuration for a platform, instead of the default simsteward picks: the newest installed runtime and a device type it supports. A pin gives either the `simctl` identifier or the display name; a name pin is resolved to an identifier before use.
 _Avoid_: Lock, fix, override
 
 ## Sharing

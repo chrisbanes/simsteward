@@ -72,7 +72,7 @@ internal abstract class LeaseService :
   @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
   private val lock = Object()
 
-  /** Resolves the spec for [platform]; only asks `simctl` when something is not pinned. */
+  /** Resolves the spec for [platform]; asks `simctl` unless both are pinned by identifier. */
   internal fun resolve(platform: Platform, runtime: String?, deviceType: String?, xcrun: String, slimming: Slimming): SimulatorSpec =
     // Slimming is not part of the key, so projects that differ only in it still share one `simctl list`.
     specs.computeIfAbsent(SpecKey(platform, runtime, deviceType, xcrun)) {

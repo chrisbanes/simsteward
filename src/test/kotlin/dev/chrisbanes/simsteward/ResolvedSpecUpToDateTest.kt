@@ -169,6 +169,21 @@ class ResolvedSpecUpToDateTest {
     assertEquals(TaskOutcome.UP_TO_DATE, devicePin.build(task).task(task)?.outcome)
   }
 
+  @Test fun namePinsAreResolvedAndRechecked() {
+    val build = FixtureBuild(directory, pinned = false)
+    build.root.resolve("gradle.properties").appendText("simsteward.ios.deviceType=iPhone 17\nsimsteward.ios.runtime=iOS 27.0\n")
+    assertEquals(TaskOutcome.SUCCESS, build.build(task).task(task)?.outcome)
+    assertEquals(mapOf("runtime" to FixtureBuild.RUNTIME, "deviceType" to FixtureBuild.DEVICE_TYPE), readRecord(state(build)))
+    build.clearCommands()
+    assertEquals(TaskOutcome.UP_TO_DATE, build.build(task).task(task)?.outcome)
+    assertEquals(listOf("xcrun simctl list -j runtimes"), build.commands())
+    build.installRuntimes(
+      FixtureBuild.runtimesJson(FixtureBuild.runtime("iOS", "27.0", "iPhone", "iPhone 17").replace("iOS-27-0", "iOS-27-0-alternate")),
+    )
+    assertEquals(TaskOutcome.SUCCESS, build.build(task).task(task)?.outcome)
+    assertEquals("${FixtureBuild.RUNTIME}-alternate", readRecord(state(build))["runtime"])
+  }
+
   @Test fun sharedResolutionFailureIsMemoizedAcrossTasks() {
     val build = FixtureBuild(directory, pinned = false)
     build.addModule("lib2")

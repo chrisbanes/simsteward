@@ -7,7 +7,9 @@ import groovy.json.JsonOutput
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.gradle.api.GradleException
 import org.junit.jupiter.api.io.TempDir
 
 class PlatformSpecTest {
@@ -57,6 +59,48 @@ class PlatformSpecTest {
     build.build(":lib:iosSimulatorArm64Test")
 
     assertEquals(listOf(listOf("$dt.iPhone-16", "$rt.iOS-26-4")), creates(build))
+  }
+
+  private fun resolveIos(runtime: String?, deviceType: String?, json: String = FixtureBuild.RUNTIMES_JSON): Pair<List<String>, Boolean> {
+    var listed = false
+    val spec = resolveSpec(Platform.IOS, {
+      listed = true
+      json
+    }, runtime, deviceType, "xcrun", Slimming(false, "simslim", null))
+    return listOf(spec.deviceType, spec.runtime) to listed
+  }
+
+  @Test
+  fun namePinsResolveToIdentifiers() {
+    val cases = listOf(
+      Triple("iOS 26.4", "iPhone 16", listOf("$dt.iPhone-16", "$rt.iOS-26-4")),
+      Triple("$rt.iOS-27-0", "iPhone 17 Pro", listOf("$dt.iPhone-17-Pro", "$rt.iOS-27-0")),
+      Triple("iOS 26.4", "$dt.iPhone-16", listOf("$dt.iPhone-16", "$rt.iOS-26-4")),
+      Triple("iOS 26.4", null, listOf("$dt.iPhone-16", "$rt.iOS-26-4")),
+      Triple(null, "iPhone 17 Pro", listOf("$dt.iPhone-17-Pro", "$rt.iOS-27-0")),
+    )
+    for ((runtime, deviceType, expected) in cases) {
+      assertEquals(expected to true, resolveIos(runtime, deviceType), "$runtime / $deviceType")
+    }
+    assertEquals(listOf("$dt.iPhone-16", "$rt.iOS-26-4") to false, resolveIos("$rt.iOS-26-4", "$dt.iPhone-16", "not json"))
+  }
+
+  @Test
+  fun unmatchedAndAmbiguousNamePinsFail() {
+    for ((runtime, deviceType) in listOf("iOS 99.0" to null, null to "iPhone 99", "iOS 99.0" to "iPhone 99")) {
+      val message = assertFailsWith<GradleException> { resolveIos(runtime, deviceType) }.message.orEmpty()
+      assertTrue("No installed iOS simulator runtime" in message, message)
+    }
+    val shared = row("first", "27.2") + ("name" to "iOS 27.2")
+    val other = shared + ("identifier" to "other") +
+      ("supportedDeviceTypes" to listOf(mapOf("identifier" to "$dt.Other", "name" to "Other", "productFamily" to "other")))
+    fun json(vararg rows: Map<String, Any?>) = JsonOutput.toJson(mapOf("runtimes" to rows.toList()))
+    val ambiguous = json(shared, shared + ("identifier" to "second"), shared + ("buildversion" to "build"), other)
+    val message = assertFailsWith<GradleException> { resolveIos("iOS 27.2", null, ambiguous) }.message.orEmpty()
+    for (text in listOf("iOS 27.2", "matches several", "first, second.", "simsteward.ios.runtime")) assertTrue(text in message, message)
+    assertEquals(listOf("$dt.Other", "other") to true, resolveIos("iOS 27.2", "Other", ambiguous))
+    assertEquals(listOf("$dt.Device", "first") to true, resolveIos("iOS 27.2", "$dt.Device", json(shared, other)))
+    assertEquals(listOf("$dt.Device", "first") to true, resolveIos("iOS 27.2", null, JsonOutput.toJson(mapOf("runtimes" to listOf(shared, shared + ("buildversion" to "other"))))))
   }
 
   @Test

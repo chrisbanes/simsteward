@@ -170,7 +170,7 @@ private class LeaseAction(
       ownership,
       checkAtLeastOne("maxSimulators", extension.maxSimulators.get()),
     )
-    if (settings.runtime.orNull == null || settings.deviceType.orNull == null) service.stage(key, resolvedState, spec)
+    if (!pinnedByIdentifiers(settings.runtime.orNull, settings.deviceType.orNull)) service.stage(key, resolvedState, spec)
     // Added at execution, so the listener never enters the configuration cache.
     task.addTestListener(object : TestListener {
       override fun beforeSuite(suite: TestDescriptor) = Unit
@@ -198,7 +198,7 @@ private class ResolvedSpecUpToDate(
     val settings = extension.of(platform)
     val runtime = settings.runtime.orNull
     val deviceType = settings.deviceType.orNull
-    if (runtime != null && deviceType != null) return true
+    if (pinnedByIdentifiers(runtime, deviceType)) return true
     val slimming = Slimming(extension.slim.get(), simslim.get(), settings.profile.orNull?.let { projectDir.resolve(it).absolutePath })
     return runCatching {
       val spec = leases.get().resolve(platform, runtime, deviceType, xcrun.get(), slimming)

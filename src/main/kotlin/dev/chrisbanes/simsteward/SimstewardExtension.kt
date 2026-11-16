@@ -50,10 +50,10 @@ abstract class SimstewardExtension {
 
 /** Settings for one platform; each defaults from `simsteward.<platform>.<name>`, unset when absent. */
 interface PlatformSettings {
-  /** Simulator device type identifier; unset picks one automatically. */
+  /** Simulator device type identifier or name, such as `iPhone 18 Pro`; unset picks one automatically. */
   val deviceType: Property<String>
 
-  /** Simulator runtime identifier; unset picks the newest installed. */
+  /** Simulator runtime identifier or name, such as `iOS 26.0`; unset picks the newest installed. */
   val runtime: Property<String>
 
   /** Slimming profile path; a relative path resolves against this project, or the build root when set by property. */
