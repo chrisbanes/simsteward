@@ -4,6 +4,18 @@ Simsteward is a Gradle plugin for Kotlin Multiplatform builds. It gives the buil
 
 Simsteward never selects, resets or deletes a simulator it did not create, so the simulators you use day to day are left alone.
 
+## Why simsteward
+
+Without simsteward, the Kotlin Gradle plugin runs every simulator test task with `xcrun simctl spawn --standalone`, on one simulator it picks from `xcrun simctl list devices available`. Standalone mode doesn't boot that simulator. The test binary runs as an ordinary process with the simulator's environment, so it starts in about a second, and parallel test tasks never wait for a simulator.
+
+The catch is that a standalone process can't reach the simulator's system services. For example, on iOS 27.0, registering for a Darwin notification with `notify_register_check` fails in standalone mode and succeeds on a booted simulator. Apple also marks `--standalone` as deprecated. And every standalone task uses that one simulator's data directory, which it shares with the other tasks and with you.
+
+You can turn standalone mode off in the Kotlin Gradle plugin, but it then expects you to boot the right simulator yourself before the tests run. Simsteward does that part. It turns standalone mode off, creates and boots simulators for the build, gives each running test task its own, and deletes them when the build ends.
+
+Booting is the cost: a new simulator takes tens of seconds to boot and keeps using memory while it runs. Pools reuse simulators across test tasks, `maxSimulators` caps how many a pool boots, and [slimming](#slim-and-stock-simulators) turns off background services your tests don't need.
+
+If your tests pass in standalone mode and you don't need them on simulators of their own, the Kotlin Gradle plugin's default is faster, and you may not need simsteward.
+
 ## Setup
 
 Requires JDK 17, Gradle 8.14 and Kotlin Gradle plugin 2.2.0 or newer.
@@ -95,7 +107,7 @@ Names are easier to read; identifiers keep a task on exactly one simulator whate
 
 ## Slim and stock simulators
 
-Managed simulators are stock by default: every background service runs, as on a simulator you create yourself. Simsteward boots each one before its first lease.
+Managed simulators are stock by default: every background service runs, as on a simulator you create yourself. Simsteward boots each one before its first lease, because its test tasks run with standalone mode off.
 
 With slimming on, simsteward runs `simslim on` and `simslim verify` on each new managed simulator, which disables the background services its profile does not keep. Without a `profile`, simsteward passes none and SimSlim's own default applies. If your tests depend on a service the profile turns off, give that platform a profile that keeps it.
 
