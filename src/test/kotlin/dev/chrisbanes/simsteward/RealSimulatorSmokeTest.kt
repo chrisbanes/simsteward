@@ -116,10 +116,6 @@ class RealSimulatorSmokeTest {
       """
 
       extensions.configure<dev.chrisbanes.simsteward.SimstewardExtension>("simsteward") { testShards.set(2) }
-      tasks.matching { "Shard" in it.name && it.name.endsWith("Test") }.configureEach {
-        doFirst { println("window ${'$'}path start ${'$'}{System.currentTimeMillis()}") }
-        doLast { println("window ${'$'}path end ${'$'}{System.currentTimeMillis()}") }
-      }
       """.trimIndent(),
     )
     runner().withArguments(":lib:linkDebugTestIosSimulatorArm64", "--no-scan", "--stacktrace").build()
@@ -136,12 +132,13 @@ class RealSimulatorSmokeTest {
       .toSet()
     assertEquals(setOf("AlphaTest", "SmokeTest"), classes(1))
     assertEquals(setOf("BetaTest"), classes(2))
-    // The shards' task windows overlap, so they ran in parallel.
-    val windows = shards.map { shard ->
-      fun at(edge: String) = Regex("window ${Regex.escape(shard)} $edge (\\d+)").find(result.output)!!.groupValues[1].toLong()
-      at("start")..at("end")
+    // Shard 2 only gets its own simulator if it reserved one while shard 1's was still being created or leased;
+    // run one after the other, it would reuse shard 1's idle simulator. Timing windows would depend on creation time.
+    val udids = shards.map { shard ->
+      Regex("${Regex.escape(shard)} leased managed simulator ([^ ]+)").find(result.output)?.groupValues?.get(1)
     }
-    assertTrue(windows[0].first < windows[1].last && windows[1].first < windows[0].last, windows.toString())
+    assertTrue(udids.all { it != null } && udids.distinct().size == 2, "shards did not hold distinct leases: $udids\n${result.output}")
+    assertTrue("is waiting for a returned lease" !in result.output, result.output)
     val report = directory.resolve("lib/build/reports/tests/iosSimulatorArm64Test").walk().filter { it.extension == "html" }
       .joinToString { it.readText() }
     listOf("AlphaTest", "BetaTest", "SmokeTest").forEach { assertTrue(it in report, "$it missing from the combined report") }

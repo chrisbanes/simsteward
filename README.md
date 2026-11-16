@@ -131,7 +131,13 @@ simsteward {
 }
 ```
 
-`testShards` (or the `simsteward.testShards` property; default 1, off) splits each simulator test task in the project into that many shard tasks, such as `iosSimulatorArm64Shard1Test`. Each shard leases its own simulator, lists the test binary's classes, and runs every Nth class in sorted order. `iosSimulatorArm64Test` runs its shards instead of its own tests, so `iosSimulatorArm64Test`, `allTests` and `check` work unchanged. `maxSimulators` still caps how many shards run at once; the rest wait for a returned lease. With `--tests`, the original task runs alone, as it does from the IDE.
+`testShards` (or the `simsteward.testShards` property; default 1, off) splits each simulator test task in the project into that many shard tasks, such as `iosSimulatorArm64Shard1Test`. Each shard leases its own simulator, lists the test binary's classes, and runs every Nth class in sorted order. `iosSimulatorArm64Test` runs its shards instead of its own tests, so `iosSimulatorArm64Test`, `allTests` and `check` work unchanged. With `--tests`, the original task runs alone, as it does from the IDE.
+
+Shards run in parallel only as far as these limits allow:
+
+- **Gradle workers.** Each shard is an ordinary task, so Gradle runs at most `--max-workers` of them at once. With one worker they run one after another, even from the configuration cache.
+- **`maxSimulators`.** A shard leases from the same pool as every other test task with that simulator spec in the build. Once the pool is at its cap, further shards wait for a returned lease and log that they are waiting, then reuse that simulator.
+- **Simulator creation.** A shard that needs a new simulator starts its tests only once that simulator is created and booted, or slimmed. Shards create their simulators concurrently, but creation time varies, so one shard can finish before another's simulator is ready. Their tests then do not overlap, even though neither waited for the other.
 
 The original task runs no tests of its own, so `--rerun` or `clean<Task>` on it reruns nothing; use `--rerun-tasks` or clean the shard tasks. Shards copy the original task's `enabled`, `ignoreFailures` and exclude filters when they are created. Anything else set only on the original, such as `onlyIf` conditions, `environment` or `testLogging`, does not reach them; configure `tasks.withType<KotlinNativeSimulatorTest>()` instead. A shard replaces any include filter set on it with its share. Requesting a filtered original together with `check` or `allTests` runs the shards as well.
 
