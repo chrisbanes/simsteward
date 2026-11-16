@@ -60,6 +60,44 @@ class PlatformSpecTest {
   }
 
   @Test
+  fun namePinsResolveToIdentifiers() {
+    val pins = listOf(
+      "deviceType=iPhone 16\nsimsteward.ios.runtime=iOS 26.4" to listOf("$dt.iPhone-16", "$rt.iOS-26-4"),
+      "deviceType=iPhone 17 Pro\nsimsteward.ios.runtime=$rt.iOS-27-0" to listOf("$dt.iPhone-17-Pro", "$rt.iOS-27-0"),
+      "deviceType=$dt.iPhone-16\nsimsteward.ios.runtime=iOS 26.4" to listOf("$dt.iPhone-16", "$rt.iOS-26-4"),
+      "runtime=iOS 26.4" to listOf("$dt.iPhone-16", "$rt.iOS-26-4"),
+      "deviceType=iPhone 17 Pro" to listOf("$dt.iPhone-17-Pro", "$rt.iOS-27-0"),
+    )
+    for ((index, case) in pins.withIndex()) {
+      val (pin, expected) = case
+      val build = FixtureBuild(directory.resolve("names-$index"), pinned = false)
+      build.root.resolve("gradle.properties").appendText("simsteward.ios.$pin\n")
+      build.build(":lib:iosSimulatorArm64Test")
+      assertEquals(listOf(expected), creates(build), pin)
+      assertTrue(build.commands().any { "simctl list -j runtimes" in it }, pin)
+    }
+  }
+
+  @Test
+  fun unmatchedAndAmbiguousNamePinsFail() {
+    val unmatched = listOf("runtime=iOS 99.0", "deviceType=iPhone 99", "deviceType=iPhone 99\nsimsteward.ios.runtime=iOS 99.0")
+    for ((index, pin) in unmatched.withIndex()) {
+      val build = FixtureBuild(directory.resolve("unmatched-$index"), pinned = false)
+      build.root.resolve("gradle.properties").appendText("simsteward.ios.$pin\n")
+      assertTrue("No installed iOS simulator runtime" in build.buildAndFail(":lib:iosSimulatorArm64Test").output, pin)
+      assertEquals(emptyList(), creates(build))
+    }
+    val shared = row("first", "27.2") + ("name" to "iOS 27.2")
+    val rows = listOf(shared, shared + ("identifier" to "second"), shared + ("buildversion" to "other"))
+    val build = fixture("ambiguous-name", rows)
+    build.root.resolve("gradle.properties").appendText("simsteward.ios.runtime=iOS 27.2\n")
+    val output = build.buildAndFail(":lib:iosSimulatorArm64Test").output
+    val message = output.lineSequence().first { "matches several" in it }.trim()
+    for (text in listOf("iOS 27.2", "first", "second", "simsteward.ios.runtime")) assertTrue(text in message, message)
+    assertEquals(emptyList(), creates(build))
+  }
+
+  @Test
   fun newestRuntimeComparesEachVersionComponent() {
     val build = FixtureBuild(directory, pinned = false)
     build.installRuntimes(

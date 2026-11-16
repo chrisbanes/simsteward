@@ -44,8 +44,8 @@ Set the build's defaults as Gradle properties in the root project's `gradle.prop
 ```properties
 simsteward.slim=true
 simsteward.maxSimulators=3
-simsteward.ios.deviceType=com.apple.CoreSimulator.SimDeviceType.iPhone-16
-simsteward.ios.runtime=com.apple.CoreSimulator.SimRuntime.iOS-18-2
+simsteward.ios.deviceType=iPhone 16
+simsteward.ios.runtime=iOS 18.2
 ```
 
 Then, where a module needs something different, override those values in that module's `simsteward {}` block:
@@ -54,7 +54,7 @@ Then, where a module needs something different, override those values in that mo
 simsteward {
   maxSimulators.set(1)
   ios {
-    deviceType.set("com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M2")
+    deviceType.set("iPad Air 11-inch (M2)")
   }
 }
 ```
@@ -67,8 +67,8 @@ The `simsteward {}` block only configures the project it is in. A block in the r
 | `simsteward.slim` | `slim` | `false` | Slims new managed simulators with SimSlim. |
 | `simsteward.maxSimulators` | `maxSimulators` | `2` | The most simulators one pool may hold. Must be at least 1. |
 | `simsteward.testShards` | `testShards` | `1` | Splits each simulator test task into this many shards; see [Test shards](#test-shards). Must be at least 1. |
-| `simsteward.<platform>.deviceType` | `<platform> { deviceType }` | unset | Pins the device type identifier. |
-| `simsteward.<platform>.runtime` | `<platform> { runtime }` | unset | Pins the runtime identifier. |
+| `simsteward.<platform>.deviceType` | `<platform> { deviceType }` | unset | Pins the device type, by name or identifier. |
+| `simsteward.<platform>.runtime` | `<platform> { runtime }` | unset | Pins the runtime, by name or identifier. |
 | `simsteward.<platform>.profile` | `<platform> { profile }` | unset | Path to the SimSlim profile for slim simulators. |
 | `simsteward.xcrun` | | `/usr/bin/xcrun` | Path to `xcrun`. |
 | `simsteward.simslim` | | `simslim` | Path to SimSlim, when it is not on the Gradle daemon's `PATH`. |
@@ -85,7 +85,7 @@ When the device type or runtime is not pinned, simsteward picks the newest insta
 
 An unpinned task is not up to date once the pick changes, so installing a newer runtime reruns its tests on the next build.
 
-You find the identifiers to pin with `xcrun simctl list runtimes` and `xcrun simctl list devicetypes`.
+A pin is either the name or the identifier that `xcrun simctl list runtimes` and `xcrun simctl list devicetypes` show, such as `iPhone 16` or `com.apple.CoreSimulator.SimDeviceType.iPhone-16`. Identifiers stay unambiguous when two installed runtimes share a name, and pinning both by identifier also skips the `simctl` lookup before each test task. A name pin is looked up on every build, so a task pinned by name reruns if the name comes to mean a different identifier.
 
 ## Slim and stock simulators
 
@@ -105,9 +105,9 @@ Slim and stock simulators, and slim simulators with different profiles, never sh
 
 ## When things go wrong
 
-**No installed runtime**: if no installed runtime matches the platform, or the pinned runtime or device type, the task fails. Install a runtime in Xcode > Settings > Components, or pin identifiers that are installed.
+**No installed runtime**: if no installed runtime matches the platform, or the pinned runtime or device type, the task fails. Install a runtime in Xcode > Settings > Components, or pin a name or identifier that is installed.
 
-**Several runtimes with the same version**: if two installed runtime identifiers share the newest version, simsteward cannot pick between them and the task fails, naming both. Pin one with `simsteward.<platform>.runtime`.
+**Several runtimes with the same version**: if two installed runtime identifiers share the newest version, simsteward cannot pick between them and the task fails, naming both. Pin one with `simsteward.<platform>.runtime`. A pinned runtime name that matches several runtimes supporting the device type fails the same way; pin one of the identifiers it names instead.
 
 **`xcrun` or SimSlim cannot start**: the Gradle daemon may not have the same `PATH` as your shell. Set `simsteward.xcrun` or `simsteward.simslim` to the tool's full path.
 

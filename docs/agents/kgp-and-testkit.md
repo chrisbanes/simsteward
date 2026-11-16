@@ -56,11 +56,11 @@ inputs only when they are pinned. It also registers the slimming setting and
 the optional profile file contents (without making its path part of the task
 identity). Defaults are resolved during execution, using
 `simctl list -j runtimes`: simsteward chooses the newest available runtime for
-the platform and a supported device type. Pin both values to avoid this
+the platform and a supported device type. Pin both values by identifier to avoid this
 resolution command. See [ADR 0003](../adr/0003-unpinned-specs-reresolve.md)
 for the intended up-to-date behavior for unpinned values. During the up-to-date check, unpinned identifiers are resolved and compared with
 task-local state from the last successful execution. A changed identifier or a
-resolution failure causes the task to run; fully pinned tasks need no listing.
+resolution failure causes the task to run; tasks with both values pinned by identifier need no listing, while a name pin is resolved like an unpinned value.
 
 The managed simulator is stock by default; slimming is opt-in. With slimming
 enabled, simsteward runs `simslim on` and `simslim verify` with the optional

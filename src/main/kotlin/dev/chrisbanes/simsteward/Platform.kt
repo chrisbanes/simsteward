@@ -26,7 +26,8 @@ internal enum class Platform(val simctlName: String, val productFamily: String, 
 
 /**
  * Picks the newest installed runtime of [platform] and a device type it supports from the JSON of
- * `simctl list -j runtimes`, read only when something is unpinned. A pinned [runtime] or [deviceType] overrides the pick.
+ * `simctl list -j runtimes`, read unless both are pinned by identifier. A pinned [runtime] or [deviceType], given as an
+ * identifier or a name, overrides the pick; the spec always holds identifiers.
  */
 internal fun resolveSpec(
   platform: Platform,
@@ -36,13 +37,21 @@ internal fun resolveSpec(
   xcrun: String,
   slimming: Slimming,
 ): SimulatorSpec {
-  if (runtime != null && deviceType != null) return SimulatorSpec(deviceType, runtime, xcrun, slimming)
+  if (pinnedByIdentifiers(runtime, deviceType)) return SimulatorSpec(deviceType!!, runtime!!, xcrun, slimming)
+  fun matches(entry: Map<*, *>, pin: String) = entry["identifier"] == pin || entry["name"] == pin
   val runtimes = ((JsonSlurper().parseText(runtimesJson()) as Map<*, *>)["runtimes"] as List<*>)
     .map { it as Map<*, *> }
     .filter { it["platform"] == platform.simctlName && it["isAvailable"] == true }
-    .filter { runtime == null || it["identifier"] == runtime }
+    .filter { runtime == null || matches(it, runtime) }
+  val matched = runtimes.map { it["identifier"] as String }.distinct().sorted()
+  if (runtime != null && matched.size > 1) {
+    throw GradleException(
+      "${platform.simctlName} runtime '$runtime' matches several installed runtimes: ${matched.joinToString()}. " +
+        "Set simsteward.${platform.property}.runtime to one of these identifiers in gradle.properties.",
+    )
+  }
   fun supported(r: Map<*, *>) = (r["supportedDeviceTypes"] as List<*>).map { it as Map<*, *> }
-    .filter { deviceType?.let { pinned -> it["identifier"] == pinned } ?: (it["productFamily"] == platform.productFamily) }
+    .filter { deviceType?.let { pinned -> matches(it, pinned) } ?: (it["productFamily"] == platform.productFamily) }
     .map { it["identifier"] as String }
 
   fun version(r: Map<*, *>): List<Int> {
@@ -83,5 +92,9 @@ internal fun resolveSpec(
       "Install a ${platform.simctlName} simulator runtime (Xcode > Settings > Components), " +
       "or set simsteward.${platform.property}.runtime and simsteward.${platform.property}.deviceType to installed identifiers.",
   )
-  return SimulatorSpec(deviceType ?: supported(best).first(), best["identifier"] as String, xcrun, slimming)
+  return SimulatorSpec(supported(best).first(), best["identifier"] as String, xcrun, slimming)
 }
+
+/** Whether both values are pinned by identifier, so resolving the spec needs no `simctl` lookup. */
+internal fun pinnedByIdentifiers(runtime: String?, deviceType: String?): Boolean =
+  listOf(runtime, deviceType).all { it?.startsWith("com.apple.CoreSimulator.") == true }
