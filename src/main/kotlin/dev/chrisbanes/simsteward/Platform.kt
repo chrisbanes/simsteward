@@ -43,12 +43,14 @@ internal fun resolveSpec(
     .map { it as Map<*, *> }
     .filter { it["platform"] == platform.simctlName && it["isAvailable"] == true }
     .filter { runtime == null || matches(it, runtime) }
-  val matched = runtimes.map { it["identifier"] as String }.distinct().sorted()
-  if (runtime != null && matched.size > 1) {
-    throw GradleException(
-      "${platform.simctlName} runtime '$runtime' matches several installed runtimes: ${matched.joinToString()}. " +
-        "Set simsteward.${platform.property}.runtime to one of these identifiers in gradle.properties.",
-    )
+  if (runtime != null) {
+    val matched = runtimes.map { it["identifier"] as String }.distinct().sorted()
+    if (matched.size > 1) {
+      throw GradleException(
+        "${platform.simctlName} runtime '$runtime' matches several installed runtimes: ${matched.joinToString()}. " +
+          "Set simsteward.${platform.property}.runtime to one of these identifiers in gradle.properties.",
+      )
+    }
   }
   fun supported(r: Map<*, *>) = (r["supportedDeviceTypes"] as List<*>).map { it as Map<*, *> }
     .filter { deviceType?.let { pinned -> matches(it, pinned) } ?: (it["productFamily"] == platform.productFamily) }
