@@ -13,7 +13,7 @@ plugins {
   id("com.vanniktech.maven.publish") version "0.37.0"
   id("org.jetbrains.dokka") version "2.3.0"
   id("me.tylerbwong.gradle.metalava") version "0.5.1"
-  id("com.diffplug.spotless") version "8.11.0"
+  id("com.diffplug.spotless") version "8.12.0"
 }
 
 // Minimum supported versions, declared in the published metadata and exercised by the CI matrix.
